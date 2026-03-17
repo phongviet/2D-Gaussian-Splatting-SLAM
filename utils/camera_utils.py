@@ -152,3 +152,94 @@ class Camera(nn.Module):
 
         self.exposure_a = None
         self.exposure_b = None
+
+    def to_dict(self):
+        """Serialize Camera to a CPU-only dict for safe cross-process queue transfer."""
+        return {
+            "uid": self.uid,
+            "device": self.device,
+            "R": self.R.detach().cpu(),
+            "T": self.T.detach().cpu(),
+            "R_gt": self.R_gt.detach().cpu(),
+            "T_gt": self.T_gt.detach().cpu(),
+            "original_image": self.original_image.detach().cpu()
+            if self.original_image is not None
+            else None,
+            "depth": self.depth,
+            "grad_mask": self.grad_mask.detach().cpu()
+            if self.grad_mask is not None
+            else None,
+            "fx": self.fx,
+            "fy": self.fy,
+            "cx": self.cx,
+            "cy": self.cy,
+            "FoVx": self.FoVx,
+            "FoVy": self.FoVy,
+            "image_height": self.image_height,
+            "image_width": self.image_width,
+            "cam_rot_delta": self.cam_rot_delta.data.detach().cpu()
+            if self.cam_rot_delta is not None
+            else None,
+            "cam_trans_delta": self.cam_trans_delta.data.detach().cpu()
+            if self.cam_trans_delta is not None
+            else None,
+            "exposure_a": self.exposure_a.data.detach().cpu()
+            if self.exposure_a is not None
+            else None,
+            "exposure_b": self.exposure_b.data.detach().cpu()
+            if self.exposure_b is not None
+            else None,
+            "projection_matrix": self.projection_matrix.detach().cpu(),
+        }
+
+    @staticmethod
+    def from_dict(d):
+        """Reconstruct a Camera from a CPU-only dict produced by to_dict()."""
+        device = d["device"]
+        # Build a minimal gt_T from the stored R_gt/T_gt
+        gt_T = torch.eye(4)
+        gt_T[:3, :3] = d["R_gt"]
+        gt_T[:3, 3] = d["T_gt"]
+        cam = Camera(
+            uid=d["uid"],
+            color=d["original_image"].to(device)
+            if d["original_image"] is not None
+            else None,
+            depth=d["depth"],
+            gt_T=gt_T.to(device),
+            projection_matrix=d["projection_matrix"].to(device),
+            fx=d["fx"],
+            fy=d["fy"],
+            cx=d["cx"],
+            cy=d["cy"],
+            fovx=d["FoVx"],
+            fovy=d["FoVy"],
+            image_height=d["image_height"],
+            image_width=d["image_width"],
+            device=device,
+        )
+        # Restore pose (may differ from gt after tracking)
+        cam.R = d["R"].to(device)
+        cam.T = d["T"].to(device)
+        # Restore grad_mask
+        cam.grad_mask = (
+            d["grad_mask"].to(device) if d["grad_mask"] is not None else None
+        )
+        # Restore optimizable parameters
+        if d["cam_rot_delta"] is not None:
+            cam.cam_rot_delta = nn.Parameter(
+                d["cam_rot_delta"].to(device), requires_grad=True
+            )
+        if d["cam_trans_delta"] is not None:
+            cam.cam_trans_delta = nn.Parameter(
+                d["cam_trans_delta"].to(device), requires_grad=True
+            )
+        if d["exposure_a"] is not None:
+            cam.exposure_a = nn.Parameter(
+                d["exposure_a"].to(device), requires_grad=True
+            )
+        if d["exposure_b"] is not None:
+            cam.exposure_b = nn.Parameter(
+                d["exposure_b"].to(device), requires_grad=True
+            )
+        return cam

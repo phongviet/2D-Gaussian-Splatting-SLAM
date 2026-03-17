@@ -73,7 +73,7 @@ class SLAM:
         self.backend = BackEnd(self.config)
 
         self.frontend.dataset = self.dataset
-        self.frontend.background = self.background
+        self.frontend.background = self.background.cpu()
         self.frontend.pipeline_params = self.pipeline_params
         self.frontend.frontend_queue = frontend_queue
         self.frontend.backend_queue = backend_queue
@@ -82,7 +82,7 @@ class SLAM:
         self.frontend.set_hyperparams()
 
         self.backend.gaussians = self.gaussians
-        self.backend.background = self.background
+        self.backend.background = self.background.cpu()
         self.backend.cameras_extent = 6.0
         self.backend.pipeline_params = self.pipeline_params
         self.backend.opt_params = self.opt_params
@@ -94,8 +94,8 @@ class SLAM:
 
         self.params_gui = gui_utils.ParamsGUI(
             pipe=self.pipeline_params,
-            background=self.background,
-            gaussians=self.gaussians,
+            background=self.background.cpu(),
+            gaussians=None,
             q_main2vis=q_main2vis,
             q_vis2main=q_vis2main,
         )
