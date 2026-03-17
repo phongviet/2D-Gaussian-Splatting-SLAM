@@ -1,0 +1,33 @@
+MonoGS: saving results in results/datasets_tum/2026-03-12-00-43-48
+Traceback (most recent call last):
+  File "<string>", line 1, in <module>
+  File "/home/phong/miniconda3/envs/MonoGS/lib/python3.8/multiprocessing/spawn.py", line 116, in spawn_main
+    exitcode = _main(fd, parent_sentinel)
+  File "/home/phong/miniconda3/envs/MonoGS/lib/python3.8/multiprocessing/spawn.py", line 126, in _main
+    self = reduction.pickle.load(from_parent)
+  File "/home/phong/miniconda3/envs/MonoGS/lib/python3.8/site-packages/torch/multiprocessing/reductions.py", line 149, in rebuild_cuda_tensor
+    storage = storage_cls._new_shared_cuda(
+  File "/home/phong/miniconda3/envs/MonoGS/lib/python3.8/site-packages/torch/storage.py", line 1212, in _new_shared_cuda
+    return torch.UntypedStorage._new_shared_cuda(*args, **kwargs)
+RuntimeError: CUDA error: invalid resource handle
+CUDA kernel errors might be asynchronously reported at some other API call, so the stacktrace below might be incorrect.
+For debugging consider passing CUDA_LAUNCH_BLOCKING=1
+Compile with `TORCH_USE_CUDA_DSA` to enable device-side assertions.
+
+Traceback (most recent call last):
+  File "<string>", line 1, in <module>
+  File "/home/phong/miniconda3/envs/MonoGS/lib/python3.8/multiprocessing/spawn.py", line 116, in spawn_main
+    exitcode = _main(fd, parent_sentinel)
+  File "/home/phong/miniconda3/envs/MonoGS/lib/python3.8/multiprocessing/spawn.py", line 126, in _main
+    self = reduction.pickle.load(from_parent)
+  File "/home/phong/miniconda3/envs/MonoGS/lib/python3.8/site-packages/torch/multiprocessing/reductions.py", line 149, in rebuild_cuda_tensor
+    storage = storage_cls._new_shared_cuda(
+  File "/home/phong/miniconda3/envs/MonoGS/lib/python3.8/site-packages/torch/storage.py", line 1212, in _new_shared_cuda
+    return torch.UntypedStorage._new_shared_cuda(*args, **kwargs)
+RuntimeError: CUDA error: invalid resource handle
+CUDA kernel errors might be asynchronously reported at some other API call, so the stacktrace below might be incorrect.
+For debugging consider passing CUDA_LAUNCH_BLOCKING=1
+Compile with `TORCH_USE_CUDA_DSA` to enable device-side assertions.
+
+/home/phong/miniconda3/envs/MonoGS/lib/python3.8/multiprocessing/resource_tracker.py:216: UserWarning: resource_tracker: There appear to be 12 leaked semaphore objects to clean up at shutdown
+  warnings.warn('resource_tracker: There appear to be %d '
