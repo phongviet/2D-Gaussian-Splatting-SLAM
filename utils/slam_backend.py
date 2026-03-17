@@ -11,7 +11,7 @@ from utils.camera_utils import Camera
 from utils.logging_utils import Log
 from utils.multiprocessing_utils import clone_obj
 from utils.pose_utils import update_pose
-from utils.slam_utils import get_loss_mapping
+from utils.slam_utils import get_loss_mapping, get_loss_normal_consistency, get_loss_dist
 
 
 class BackEnd(mp.Process):
@@ -227,9 +227,16 @@ class BackEnd(mp.Process):
                 visibility_filter_acm.append(visibility_filter)
                 radii_acm.append(radii)
 
-            scaling = self.gaussians.get_scaling
-            isotropic_loss = torch.abs(scaling - scaling.mean(dim=1).view(-1, 1))
-            loss_mapping += 10 * isotropic_loss.mean()
+            lambda_normal = self.config["Training"].get("lambda_normal", 0.05)
+            lambda_dist = self.config["Training"].get("lambda_dist", 0.0)
+            if self.iteration_count > 3000 and lambda_dist > 0:
+                loss_mapping += lambda_dist * get_loss_dist(render_pkg["rend_dist"])
+            if self.iteration_count > 7000 and lambda_normal > 0:
+                loss_mapping += lambda_normal * get_loss_normal_consistency(
+                    render_pkg["rend_normal"],
+                    render_pkg["surf_normal"],
+                    render_pkg["rend_alpha"],
+                )
             loss_mapping.backward()
             gaussian_split = False
             ## Deinsifying / Pruning Gaussians
