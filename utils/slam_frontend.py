@@ -6,6 +6,7 @@ import torch.multiprocessing as mp
 
 from gaussian_splatting.gaussian_renderer import render
 from gaussian_splatting.utils.graphics_utils import getProjectionMatrix2, getWorld2View2
+from gaussian_splatting.scene.gaussian_model import GaussianModel
 from gui import gui_utils
 from utils.camera_utils import Camera
 from utils.eval_utils import eval_ate, save_gaussians
@@ -286,24 +287,27 @@ class FrontEnd(mp.Process):
         return window, removed_frame
 
     def request_keyframe(self, cur_frame_idx, viewpoint, current_window, depthmap):
-        msg = ["keyframe", cur_frame_idx, viewpoint, current_window, depthmap]
+        msg = ["keyframe", cur_frame_idx, viewpoint.to_dict(), current_window, depthmap]
         self.backend_queue.put(msg)
         self.requested_keyframe += 1
 
     def reqeust_mapping(self, cur_frame_idx, viewpoint):
-        msg = ["map", cur_frame_idx, viewpoint]
+        msg = ["map", cur_frame_idx, viewpoint.to_dict()]
         self.backend_queue.put(msg)
 
     def request_init(self, cur_frame_idx, viewpoint, depth_map):
-        msg = ["init", cur_frame_idx, viewpoint, depth_map]
+        msg = ["init", cur_frame_idx, viewpoint.to_dict(), depth_map]
         self.backend_queue.put(msg)
         self.requested_init = True
 
     def sync_backend(self, data):
-        self.gaussians = data[1]
+        self.gaussians = GaussianModel.from_dict(data[1])
         occ_aware_visibility = data[2]
         keyframes = data[3]
-        self.occ_aware_visibility = occ_aware_visibility
+        # Move occ_aware_visibility tensors back to CUDA (were sent as CPU from backend)
+        self.occ_aware_visibility = {
+            k: v.cuda() for k, v in occ_aware_visibility.items()
+        }
 
         for kf_id, kf_R, kf_T in keyframes:
             self.cameras[kf_id].update_RT(kf_R.clone(), kf_T.clone())
@@ -314,6 +318,7 @@ class FrontEnd(mp.Process):
             torch.cuda.empty_cache()
 
     def run(self):
+        self.background = self.background.cuda()
         cur_frame_idx = 0
         projection_matrix = getProjectionMatrix2(
             znear=0.01,

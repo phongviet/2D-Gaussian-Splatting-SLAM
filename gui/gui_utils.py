@@ -9,6 +9,7 @@ from gaussian_splatting.utils.general_utils import (
     build_scaling_rotation,
     strip_symmetric,
 )
+from utils.camera_utils import Camera
 
 cv_gl = np.array([[1, 0, 0, 0], [0, -1, 0, 0], [0, 0, -1, 0], [0, 0, 0, 1]])
 
@@ -90,27 +91,70 @@ class GaussianPacket:
         self.has_gaussians = False
         if gaussians is not None:
             self.has_gaussians = True
-            self.get_xyz = gaussians.get_xyz.detach().clone()
+            # Store all Gaussian tensors on CPU so the packet can safely cross
+            # process boundaries via mp.Queue without CUDA IPC.
+            self.get_xyz = gaussians.get_xyz.detach().clone().cpu()
             self.active_sh_degree = gaussians.active_sh_degree
-            self.get_opacity = gaussians.get_opacity.detach().clone()
-            self.get_scaling = gaussians.get_scaling.detach().clone()
-            self.get_rotation = gaussians.get_rotation.detach().clone()
+            self.get_opacity = gaussians.get_opacity.detach().clone().cpu()
+            self.get_scaling = gaussians.get_scaling.detach().clone().cpu()
+            self.get_rotation = gaussians.get_rotation.detach().clone().cpu()
             self.max_sh_degree = gaussians.max_sh_degree
-            self.get_features = gaussians.get_features.detach().clone()
+            self.get_features = gaussians.get_features.detach().clone().cpu()
 
-            self._rotation = gaussians._rotation.detach().clone()
+            self._rotation = gaussians._rotation.detach().clone().cpu()
             self.rotation_activation = torch.nn.functional.normalize
-            self.unique_kfIDs = gaussians.unique_kfIDs.clone()
-            self.n_obs = gaussians.n_obs.clone()
+            self.unique_kfIDs = gaussians.unique_kfIDs.clone().cpu()
+            self.n_obs = gaussians.n_obs.clone().cpu()
 
-        self.keyframe = keyframe
-        self.current_frame = current_frame
+        # Serialize Camera objects to plain CPU dicts so they cross the process
+        # boundary safely.  to_cuda() will reconstruct them on the other side.
+        self.keyframe = keyframe.to_dict() if keyframe is not None else None
+        self.current_frame = (
+            current_frame.to_dict() if current_frame is not None else None
+        )
+        self.keyframes = (
+            [kf.to_dict() for kf in keyframes] if keyframes is not None else None
+        )
+
         self.gtcolor = self.resize_img(gtcolor, 320)
         self.gtdepth = self.resize_img(gtdepth, 320)
         self.gtnormal = self.resize_img(gtnormal, 320)
-        self.keyframes = keyframes
+
+        # Move gtcolor / gtdepth tensors to CPU if they are tensors
+        if self.gtcolor is not None and isinstance(self.gtcolor, torch.Tensor):
+            self.gtcolor = self.gtcolor.cpu()
+        if self.gtdepth is not None and isinstance(self.gtdepth, torch.Tensor):
+            self.gtdepth = self.gtdepth.cpu()
+        if self.gtnormal is not None and isinstance(self.gtnormal, torch.Tensor):
+            self.gtnormal = self.gtnormal.cpu()
+
         self.finish = finish
         self.kf_window = kf_window
+
+    def to_cuda(self):
+        """Move all tensors to CUDA and reconstruct Camera objects from dicts.
+
+        Must be called in the receiving (GUI) process after getting this packet
+        from the queue.
+        """
+        if self.has_gaussians:
+            self.get_xyz = self.get_xyz.cuda()
+            self.get_opacity = self.get_opacity.cuda()
+            self.get_scaling = self.get_scaling.cuda()
+            self.get_rotation = self.get_rotation.cuda()
+            self.get_features = self.get_features.cuda()
+            self._rotation = self._rotation.cuda()
+            self.unique_kfIDs = self.unique_kfIDs.cuda()
+            self.n_obs = self.n_obs.cuda()
+
+        if self.current_frame is not None:
+            self.current_frame = Camera.from_dict(self.current_frame)
+        if self.keyframe is not None:
+            self.keyframe = Camera.from_dict(self.keyframe)
+        if self.keyframes is not None:
+            self.keyframes = [Camera.from_dict(kf) for kf in self.keyframes]
+
+        return self
 
     def resize_img(self, img, width):
         if img is None:

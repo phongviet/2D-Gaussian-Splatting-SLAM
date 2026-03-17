@@ -693,3 +693,60 @@ class GaussianModel:
             viewspace_point_tensor.grad[update_filter, :2], dim=-1, keepdim=True
         )
         self.denom[update_filter] += 1
+
+    def to_dict(self):
+        """Serialize GaussianModel to a CPU-only dict for safe cross-process queue transfer.
+        Only transfers the parameter data needed for rendering; optimizer state is not included.
+        """
+        return {
+            "active_sh_degree": self.active_sh_degree,
+            "max_sh_degree": self.max_sh_degree,
+            "_xyz": self._xyz.data.detach().cpu()
+            if self._xyz.numel() > 0
+            else self._xyz.detach().cpu(),
+            "_features_dc": self._features_dc.data.detach().cpu()
+            if self._features_dc.numel() > 0
+            else self._features_dc.detach().cpu(),
+            "_features_rest": self._features_rest.data.detach().cpu()
+            if self._features_rest.numel() > 0
+            else self._features_rest.detach().cpu(),
+            "_scaling": self._scaling.data.detach().cpu()
+            if self._scaling.numel() > 0
+            else self._scaling.detach().cpu(),
+            "_rotation": self._rotation.data.detach().cpu()
+            if self._rotation.numel() > 0
+            else self._rotation.detach().cpu(),
+            "_opacity": self._opacity.data.detach().cpu()
+            if self._opacity.numel() > 0
+            else self._opacity.detach().cpu(),
+            "max_radii2D": self.max_radii2D.detach().cpu(),
+            "xyz_gradient_accum": self.xyz_gradient_accum.detach().cpu(),
+            "unique_kfIDs": self.unique_kfIDs.detach().cpu(),
+            "n_obs": self.n_obs.detach().cpu(),
+            "isotropic": self.isotropic,
+            "config": self.config,
+            "spatial_lr_scale": getattr(self, "spatial_lr_scale", 6.0),
+        }
+
+    @staticmethod
+    def from_dict(d):
+        """Reconstruct a GaussianModel from a CPU-only dict produced by to_dict().
+        The resulting model has no optimizer (rendering-only use).
+        """
+        model = GaussianModel(d["max_sh_degree"], config=d["config"])
+        model.active_sh_degree = d["active_sh_degree"]
+        model.isotropic = d["isotropic"]
+        model.spatial_lr_scale = d["spatial_lr_scale"]
+        model._xyz = nn.Parameter(d["_xyz"].cuda().requires_grad_(True))
+        model._features_dc = nn.Parameter(d["_features_dc"].cuda().requires_grad_(True))
+        model._features_rest = nn.Parameter(
+            d["_features_rest"].cuda().requires_grad_(True)
+        )
+        model._scaling = nn.Parameter(d["_scaling"].cuda().requires_grad_(True))
+        model._rotation = nn.Parameter(d["_rotation"].cuda().requires_grad_(True))
+        model._opacity = nn.Parameter(d["_opacity"].cuda().requires_grad_(True))
+        model.max_radii2D = d["max_radii2D"].cuda()
+        model.xyz_gradient_accum = d["xyz_gradient_accum"].cuda()
+        model.unique_kfIDs = d["unique_kfIDs"]
+        model.n_obs = d["n_obs"]
+        return model

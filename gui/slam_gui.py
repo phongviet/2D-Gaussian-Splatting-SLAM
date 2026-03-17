@@ -53,8 +53,9 @@ class SLAM_GUI:
 
         if params_gui is not None:
             self.background = params_gui.background
-            self.gaussian_cur = params_gui.gaussians
-            self.init = True
+            if params_gui.gaussians is not None:
+                self.gaussian_cur = params_gui.gaussians
+                self.init = True
             self.q_main2vis = params_gui.q_main2vis
             self.q_vis2main = params_gui.q_vis2main
             self.pipe = params_gui.pipe
@@ -229,6 +230,14 @@ class SLAM_GUI:
             exit(1)
 
         glfw.window_hint(glfw.VISIBLE, glfw.FALSE)
+        # Open3D/Filament initialises its own EGL context, which becomes the
+        # current EGL context.  PyOpenGL uses EGL (eglGetCurrentContext) to
+        # identify the active context, so a GLFW window created with the
+        # default GLX context API is invisible to PyOpenGL and every GL call
+        # raises "Attempt to retrieve context when no valid context".
+        # Forcing GLFW to use the EGL context API makes the GLFW context
+        # visible to PyOpenGL after glfw.make_context_current().
+        glfw.window_hint(glfw.CONTEXT_CREATION_API, glfw.EGL_CONTEXT_API)
 
         window = glfw.create_window(
             self.window_w, self.window_h, window_name, None, None
@@ -394,6 +403,10 @@ class SLAM_GUI:
         gaussian_packet = get_latest_queue(q)
         if gaussian_packet is None:
             return
+
+        # Tensors were serialised to CPU in the sender process to avoid CUDA
+        # IPC; reconstruct them on CUDA now that we are in the GUI process.
+        gaussian_packet.to_cuda()
 
         if gaussian_packet.has_gaussians:
             self.gaussian_cur = gaussian_packet
@@ -682,6 +695,8 @@ class SLAM_GUI:
 
 
 def run(params_gui=None):
+    if params_gui is not None and params_gui.background is not None:
+        params_gui.background = params_gui.background.cuda()
     app = o3d.visualization.gui.Application.instance
     app.initialize()
     win = SLAM_GUI(params_gui)

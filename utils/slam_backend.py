@@ -7,6 +7,7 @@ from tqdm import tqdm
 
 from gaussian_splatting.gaussian_renderer import render
 from gaussian_splatting.utils.loss_utils import l1_loss, ssim
+from utils.camera_utils import Camera
 from utils.logging_utils import Log
 from utils.multiprocessing_utils import clone_obj
 from utils.pose_utils import update_pose
@@ -357,14 +358,20 @@ class BackEnd(mp.Process):
         keyframes = []
         for kf_idx in self.current_window:
             kf = self.viewpoints[kf_idx]
-            keyframes.append((kf_idx, kf.R.clone(), kf.T.clone()))
+            keyframes.append((kf_idx, kf.R.clone().cpu(), kf.T.clone().cpu()))
         if tag is None:
             tag = "sync_backend"
 
-        msg = [tag, clone_obj(self.gaussians), self.occ_aware_visibility, keyframes]
+        # Move occ_aware_visibility tensors to CPU for cross-process queue transfer
+        occ_aware_visibility_cpu = {
+            k: v.cpu() for k, v in self.occ_aware_visibility.items()
+        }
+        # Serialize GaussianModel to CPU dict to avoid CUDA IPC issues across processes
+        msg = [tag, self.gaussians.to_dict(), occ_aware_visibility_cpu, keyframes]
         self.frontend_queue.put(msg)
 
     def run(self):
+        self.background = self.background.cuda()
         while True:
             if self.backend_queue.empty():
                 if self.pause:
@@ -394,7 +401,7 @@ class BackEnd(mp.Process):
                     self.push_to_frontend()
                 elif data[0] == "init":
                     cur_frame_idx = data[1]
-                    viewpoint = data[2]
+                    viewpoint = Camera.from_dict(data[2])
                     depth_map = data[3]
                     Log("Resetting the system")
                     self.reset()
@@ -408,7 +415,7 @@ class BackEnd(mp.Process):
 
                 elif data[0] == "keyframe":
                     cur_frame_idx = data[1]
-                    viewpoint = data[2]
+                    viewpoint = Camera.from_dict(data[2])
                     current_window = data[3]
                     depth_map = data[4]
 
