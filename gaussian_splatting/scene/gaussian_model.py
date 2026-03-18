@@ -24,7 +24,6 @@ from gaussian_splatting.utils.general_utils import (
     get_expon_lr_func,
     helper,
     inverse_sigmoid,
-    strip_symmetric,
 )
 from gaussian_splatting.utils.graphics_utils import BasicPointCloud, getWorld2View2
 from gaussian_splatting.utils.sh_utils import RGB2SH
@@ -63,15 +62,21 @@ class GaussianModel:
         self.config = config
         self.ply_input = None
 
-        self.isotropic = False
-
     def build_covariance_from_scaling_rotation(
-        self, scaling, scaling_modifier, rotation
+        self, center, scaling, scaling_modifier, rotation
     ):
-        L = build_scaling_rotation(scaling_modifier * scaling, rotation)
-        actual_covariance = L @ L.transpose(1, 2)
-        symm = strip_symmetric(actual_covariance)
-        return symm
+        # 2DGS: build splat2world 4x4 homogeneous transform (surfel-to-world).
+        # scaling is [N,2], rotation is [N,4] quaternion.
+        # RS = R * diag([s0, s1, 1]) transposed → [N,3,3] (row-major in CUDA)
+        RS = build_scaling_rotation(
+            torch.cat([scaling * scaling_modifier, torch.ones_like(scaling[:, :1])], dim=-1),
+            rotation
+        ).permute(0, 2, 1)  # [N,3,3]
+        trans = torch.zeros((center.shape[0], 4, 4), dtype=torch.float, device="cuda")
+        trans[:, :3, :3] = RS
+        trans[:, 3, :3] = center
+        trans[:, 3, 3] = 1
+        return trans
 
     @property
     def get_scaling(self):
@@ -97,7 +102,7 @@ class GaussianModel:
 
     def get_covariance(self, scaling_modifier=1):
         return self.covariance_activation(
-            self.get_scaling, scaling_modifier, self._rotation
+            self.get_xyz, self.get_scaling, scaling_modifier, self._rotation
         )
 
     def oneupSHdegree(self):
@@ -187,9 +192,7 @@ class GaussianModel:
             )
             * point_size
         )
-        scales = torch.log(torch.sqrt(dist2))[..., None]
-        if not self.isotropic:
-            scales = scales.repeat(1, 3)
+        scales = torch.log(torch.sqrt(dist2))[..., None].repeat(1, 2)  # [N,2] for 2DGS
 
         rots = torch.zeros((fused_point_cloud.shape[0], 4), device="cuda")
         rots[:, 0] = 1
@@ -603,7 +606,8 @@ class GaussianModel:
         )
 
         stds = self.get_scaling[selected_pts_mask].repeat(N, 1)
-        means = torch.zeros((stds.size(0), 3), device="cuda")
+        stds = torch.cat([stds, 0 * torch.ones_like(stds[:, :1])], dim=-1)  # pad to [N,3] for bmm
+        means = torch.zeros_like(stds)
         samples = torch.normal(mean=means, std=stds)
         rots = build_rotation(self._rotation[selected_pts_mask]).repeat(N, 1, 1)
         new_xyz = torch.bmm(rots, samples.unsqueeze(-1)).squeeze(-1) + self.get_xyz[
@@ -694,39 +698,41 @@ class GaussianModel:
         )
         self.denom[update_filter] += 1
 
-    def to_dict(self):
+    def to_dict(self, include_stats=True, transfer_half=False):
         """Serialize GaussianModel to a CPU-only dict for safe cross-process queue transfer.
         Only transfers the parameter data needed for rendering; optimizer state is not included.
         """
-        return {
+        def _pack_param(param):
+            t = param.data.detach().cpu() if param.numel() > 0 else param.detach().cpu()
+            if transfer_half and t.dtype == torch.float32:
+                return t.half()
+            return t
+
+        data = {
             "active_sh_degree": self.active_sh_degree,
             "max_sh_degree": self.max_sh_degree,
-            "_xyz": self._xyz.data.detach().cpu()
-            if self._xyz.numel() > 0
-            else self._xyz.detach().cpu(),
-            "_features_dc": self._features_dc.data.detach().cpu()
-            if self._features_dc.numel() > 0
-            else self._features_dc.detach().cpu(),
-            "_features_rest": self._features_rest.data.detach().cpu()
-            if self._features_rest.numel() > 0
-            else self._features_rest.detach().cpu(),
-            "_scaling": self._scaling.data.detach().cpu()
-            if self._scaling.numel() > 0
-            else self._scaling.detach().cpu(),
-            "_rotation": self._rotation.data.detach().cpu()
-            if self._rotation.numel() > 0
-            else self._rotation.detach().cpu(),
-            "_opacity": self._opacity.data.detach().cpu()
-            if self._opacity.numel() > 0
-            else self._opacity.detach().cpu(),
-            "max_radii2D": self.max_radii2D.detach().cpu(),
-            "xyz_gradient_accum": self.xyz_gradient_accum.detach().cpu(),
+            "_xyz": _pack_param(self._xyz),
+            "_features_dc": _pack_param(self._features_dc),
+            "_features_rest": _pack_param(self._features_rest),
+            "_scaling": _pack_param(self._scaling),
+            "_rotation": _pack_param(self._rotation),
+            "_opacity": _pack_param(self._opacity),
             "unique_kfIDs": self.unique_kfIDs.detach().cpu(),
             "n_obs": self.n_obs.detach().cpu(),
-            "isotropic": self.isotropic,
             "config": self.config,
             "spatial_lr_scale": getattr(self, "spatial_lr_scale", 6.0),
+            "packed_half": transfer_half,
         }
+        if include_stats:
+            max_radii2d = self.max_radii2D.detach().cpu()
+            xyz_gradient_accum = self.xyz_gradient_accum.detach().cpu()
+            if transfer_half and max_radii2d.dtype == torch.float32:
+                max_radii2d = max_radii2d.half()
+            if transfer_half and xyz_gradient_accum.dtype == torch.float32:
+                xyz_gradient_accum = xyz_gradient_accum.half()
+            data["max_radii2D"] = max_radii2d
+            data["xyz_gradient_accum"] = xyz_gradient_accum
+        return data
 
     @staticmethod
     def from_dict(d):
@@ -735,18 +741,37 @@ class GaussianModel:
         """
         model = GaussianModel(d["max_sh_degree"], config=d["config"])
         model.active_sh_degree = d["active_sh_degree"]
-        model.isotropic = d["isotropic"]
         model.spatial_lr_scale = d["spatial_lr_scale"]
-        model._xyz = nn.Parameter(d["_xyz"].cuda().requires_grad_(True))
-        model._features_dc = nn.Parameter(d["_features_dc"].cuda().requires_grad_(True))
-        model._features_rest = nn.Parameter(
-            d["_features_rest"].cuda().requires_grad_(True)
+        model._xyz = nn.Parameter(
+            d["_xyz"].to(dtype=torch.float32, device="cuda").requires_grad_(True)
         )
-        model._scaling = nn.Parameter(d["_scaling"].cuda().requires_grad_(True))
-        model._rotation = nn.Parameter(d["_rotation"].cuda().requires_grad_(True))
-        model._opacity = nn.Parameter(d["_opacity"].cuda().requires_grad_(True))
-        model.max_radii2D = d["max_radii2D"].cuda()
-        model.xyz_gradient_accum = d["xyz_gradient_accum"].cuda()
+        model._features_dc = nn.Parameter(
+            d["_features_dc"].to(dtype=torch.float32, device="cuda").requires_grad_(True)
+        )
+        model._features_rest = nn.Parameter(
+            d["_features_rest"].to(dtype=torch.float32, device="cuda").requires_grad_(True)
+        )
+        model._scaling = nn.Parameter(
+            d["_scaling"].to(dtype=torch.float32, device="cuda").requires_grad_(True)
+        )
+        model._rotation = nn.Parameter(
+            d["_rotation"].to(dtype=torch.float32, device="cuda").requires_grad_(True)
+        )
+        model._opacity = nn.Parameter(
+            d["_opacity"].to(dtype=torch.float32, device="cuda").requires_grad_(True)
+        )
+        n_points = model._xyz.shape[0]
+        if "max_radii2D" in d:
+            model.max_radii2D = d["max_radii2D"].to(dtype=torch.float32, device="cuda")
+        else:
+            model.max_radii2D = torch.zeros((n_points), device="cuda")
+
+        if "xyz_gradient_accum" in d:
+            model.xyz_gradient_accum = d["xyz_gradient_accum"].to(
+                dtype=torch.float32, device="cuda"
+            )
+        else:
+            model.xyz_gradient_accum = torch.zeros((n_points, 1), device="cuda")
         model.unique_kfIDs = d["unique_kfIDs"]
         model.n_obs = d["n_obs"]
         return model

@@ -1,4 +1,5 @@
 import os
+import queue
 import sys
 import time
 from argparse import ArgumentParser
@@ -10,7 +11,6 @@ import yaml
 from munch import munchify
 
 import wandb
-from gaussian_splatting.scene.gaussian_model import GaussianModel
 from gaussian_splatting.utils.system_utils import mkdir_p
 from gui import gui_utils, slam_gui
 from utils.config_utils import load_config
@@ -46,17 +46,37 @@ class SLAM:
         self.use_gui = self.config["Results"]["use_gui"]
         if self.live_mode:
             self.use_gui = True
+        if self.use_gui and not self.live_mode:
+            display = os.environ.get("DISPLAY")
+            wayland_display = os.environ.get("WAYLAND_DISPLAY")
+            if not display and not wayland_display:
+                Log("GUI disabled: no display detected")
+                self.use_gui = False
+        if (
+            self.use_gui
+            and torch.cuda.is_available()
+            and not self.live_mode
+            and os.environ.get("MONOGS_FORCE_GUI", "0") != "1"
+        ):
+            free_mem, total_mem = torch.cuda.mem_get_info()
+            total_gib = total_mem / (1024**3)
+            free_gib = free_mem / (1024**3)
+            min_free_for_gui = 5 * 1024 * 1024 * 1024
+            if total_mem <= 8 * 1024 * 1024 * 1024 or free_mem < min_free_for_gui:
+                Log(
+                    "GUI disabled: preserving GPU memory for SLAM "
+                    f"({free_gib:.2f} GiB free / {total_gib:.2f} GiB total). "
+                    "Set MONOGS_FORCE_GUI=1 to override."
+                )
+                self.use_gui = False
         self.eval_rendering = self.config["Results"]["eval_rendering"]
 
         model_params.sh_degree = 3 if self.use_spherical_harmonics else 0
 
-        self.gaussians = GaussianModel(model_params.sh_degree, config=self.config)
-        self.gaussians.init_lr(6.0)
+        self.gaussians = None
         self.dataset = load_dataset(
             model_params, model_params.source_path, config=config
         )
-
-        self.gaussians.training_setup(opt_params)
         bg_color = [0, 0, 0]
         self.background = torch.tensor(bg_color, dtype=torch.float32, device="cuda")
 
@@ -81,7 +101,7 @@ class SLAM:
         self.frontend.q_vis2main = q_vis2main
         self.frontend.set_hyperparams()
 
-        self.backend.gaussians = self.gaussians
+        self.backend.gaussians = None
         self.backend.background = self.background.cpu()
         self.backend.cameras_extent = 6.0
         self.backend.pipeline_params = self.pipeline_params
@@ -91,6 +111,7 @@ class SLAM:
         self.backend.live_mode = self.live_mode
 
         self.backend.set_hyperparams()
+        self.backend.init_sh_degree = model_params.sh_degree
 
         self.params_gui = gui_utils.ParamsGUI(
             pipe=self.pipeline_params,
@@ -152,15 +173,18 @@ class SLAM:
             )
 
             # re-used the frontend queue to retrive the gaussians from the backend.
-            while not frontend_queue.empty():
-                frontend_queue.get()
+            while True:
+                try:
+                    frontend_queue.get_nowait()
+                except queue.Empty:
+                    break
             backend_queue.put(["color_refinement"])
             while True:
-                if frontend_queue.empty():
-                    time.sleep(0.01)
+                try:
+                    data = frontend_queue.get(timeout=1.0)
+                except queue.Empty:
                     continue
-                data = frontend_queue.get()
-                if data[0] == "sync_backend" and frontend_queue.empty():
+                if data[0] == "sync_backend":
                     gaussians = data[1]
                     self.gaussians = gaussians
                     break

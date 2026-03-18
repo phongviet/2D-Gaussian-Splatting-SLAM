@@ -88,6 +88,10 @@ def render(
         # check if the covariance is isotropic
         if pc.get_scaling.shape[-1] == 1:
             scales = pc.get_scaling.repeat(1, 3)
+        elif pc.get_scaling.shape[-1] == 2:
+            scales = torch.cat(
+                [pc.get_scaling, torch.ones_like(pc.get_scaling[:, :1])], dim=-1
+            )
         else:
             scales = pc.get_scaling
         rotations = pc.get_rotation

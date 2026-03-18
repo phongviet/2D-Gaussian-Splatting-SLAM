@@ -1,11 +1,13 @@
 import random
 import time
+import queue
 
 import torch
 import torch.multiprocessing as mp
 from tqdm import tqdm
 
 from gaussian_splatting.gaussian_renderer import render
+from gaussian_splatting.scene.gaussian_model import GaussianModel
 from gaussian_splatting.utils.loss_utils import l1_loss, ssim
 from utils.camera_utils import Camera
 from utils.logging_utils import Log
@@ -38,6 +40,7 @@ class BackEnd(mp.Process):
         self.current_window = []
         self.initialized = not self.monocular
         self.keyframe_optimizers = None
+        self.init_sh_degree = 0
 
     def set_hyperparams(self):
         self.save_results = self.config["Results"]["save_results"]
@@ -79,10 +82,14 @@ class BackEnd(mp.Process):
         self.keyframe_optimizers = None
 
         # remove all gaussians
-        self.gaussians.prune_points(self.gaussians.unique_kfIDs >= 0)
+        if self.gaussians is not None:
+            self.gaussians.prune_points(self.gaussians.unique_kfIDs >= 0)
         # remove everything from the queues
-        while not self.backend_queue.empty():
-            self.backend_queue.get()
+        while True:
+            try:
+                self.backend_queue.get_nowait()
+            except queue.Empty:
+                break
 
     def initialize_map(self, cur_frame_idx, viewpoint):
         for mapping_iteration in range(self.init_itr_num):
@@ -374,13 +381,29 @@ class BackEnd(mp.Process):
             k: v.cpu() for k, v in self.occ_aware_visibility.items()
         }
         # Serialize GaussianModel to CPU dict to avoid CUDA IPC issues across processes
-        msg = [tag, self.gaussians.to_dict(), occ_aware_visibility_cpu, keyframes]
+        if tag in {"init", "keyframe"}:
+            Log(
+                f"Preparing frontend sync tag={tag} gaussians={self.gaussians.get_xyz.shape[0]}"
+            )
+        msg = [
+            tag,
+            self.gaussians.to_dict(include_stats=False, transfer_half=True),
+            occ_aware_visibility_cpu,
+            keyframes,
+        ]
         self.frontend_queue.put(msg)
+        if tag in {"init", "keyframe"}:
+            Log(f"Pushed frontend sync tag={tag}")
 
     def run(self):
         self.background = self.background.cuda()
         while True:
-            if self.backend_queue.empty():
+            try:
+                data = self.backend_queue.get_nowait()
+            except queue.Empty:
+                data = None
+
+            if data is None:
                 if self.pause:
                     time.sleep(0.01)
                     continue
@@ -396,7 +419,6 @@ class BackEnd(mp.Process):
                     self.map(self.current_window, prune=True, iters=10)
                     self.push_to_frontend()
             else:
-                data = self.backend_queue.get()
                 if data[0] == "stop":
                     break
                 elif data[0] == "pause":
@@ -411,6 +433,15 @@ class BackEnd(mp.Process):
                     viewpoint = Camera.from_dict(data[2])
                     depth_map = data[3]
                     Log("Resetting the system")
+
+                    if self.gaussians is None:
+                        self.gaussians = GaussianModel(
+                            self.init_sh_degree,
+                            config=self.config,
+                        )
+                        self.gaussians.init_lr(self.cameras_extent)
+                        self.gaussians.training_setup(self.opt_params)
+
                     self.reset()
 
                     self.viewpoints[cur_frame_idx] = viewpoint
@@ -489,8 +520,14 @@ class BackEnd(mp.Process):
                     self.push_to_frontend("keyframe")
                 else:
                     raise Exception("Unprocessed data", data)
-        while not self.backend_queue.empty():
-            self.backend_queue.get()
-        while not self.frontend_queue.empty():
-            self.frontend_queue.get()
+        while True:
+            try:
+                self.backend_queue.get_nowait()
+            except queue.Empty:
+                break
+        while True:
+            try:
+                self.frontend_queue.get_nowait()
+            except queue.Empty:
+                break
         return

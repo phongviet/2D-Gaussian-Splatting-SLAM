@@ -1,7 +1,7 @@
 import copy
+import queue
 
 import torch
-import torch.multiprocessing as mp
 
 
 class FakeQueue:
@@ -9,7 +9,7 @@ class FakeQueue:
         del arg
 
     def get_nowait(self):
-        raise mp.queues.Empty
+        raise queue.Empty
 
     def qsize(self):
         return 0
