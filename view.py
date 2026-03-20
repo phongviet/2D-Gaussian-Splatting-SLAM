@@ -13,6 +13,7 @@ from types import SimpleNamespace
 from typing import Optional
 
 import numpy as np
+from plyfile import PlyData, PlyElement
 
 from utils.renderer_utils import get_renderer_components
 
@@ -133,8 +134,68 @@ def _prepare_monitor_scene_dir(run_dir: Path, ply_path: Path, cfg, trj_path: Pat
     scene_dir.mkdir(parents=True, exist_ok=True)
 
     input_ply = scene_dir / "input.ply"
-    if not input_ply.exists() or input_ply.stat().st_size != ply_path.stat().st_size:
-        shutil.copy2(ply_path, input_ply)
+    monitor_ply_src = scene_dir / "input_ply_src.txt"
+    src_key = f"{ply_path.resolve()}|{ply_path.stat().st_mtime_ns}|{ply_path.stat().st_size}"
+    last_key = ""
+    if monitor_ply_src.exists():
+        try:
+            last_key = monitor_ply_src.read_text(encoding="utf-8").strip()
+        except Exception:
+            last_key = ""
+    needs_refresh = (not input_ply.exists()) or (src_key != last_key)
+    if needs_refresh:
+        try:
+            ply = PlyData.read(str(ply_path))
+            vertex = ply["vertex"]
+            names = vertex.data.dtype.names
+            if names is None:
+                raise ValueError("PLY vertex has no fields")
+
+            x = np.asarray(vertex["x"], dtype=np.float32)
+            y = np.asarray(vertex["y"], dtype=np.float32)
+            z = np.asarray(vertex["z"], dtype=np.float32)
+
+            if all(c in names for c in ("red", "green", "blue")):
+                red = np.asarray(vertex["red"], dtype=np.uint8)
+                green = np.asarray(vertex["green"], dtype=np.uint8)
+                blue = np.asarray(vertex["blue"], dtype=np.uint8)
+            elif all(c in names for c in ("f_dc_0", "f_dc_1", "f_dc_2")):
+                f0 = np.asarray(vertex["f_dc_0"], dtype=np.float32)
+                f1 = np.asarray(vertex["f_dc_1"], dtype=np.float32)
+                f2 = np.asarray(vertex["f_dc_2"], dtype=np.float32)
+                rgb = np.stack([f0, f1, f2], axis=-1)
+                rgb = np.clip((rgb * 0.28209479177387814 + 0.5) * 255.0, 0, 255)
+                red = rgb[:, 0].astype(np.uint8)
+                green = rgb[:, 1].astype(np.uint8)
+                blue = rgb[:, 2].astype(np.uint8)
+            else:
+                raise ValueError("PLY has neither RGB nor SH DC fields")
+
+            data = np.empty(
+                x.shape[0],
+                dtype=[
+                    ("x", "f4"),
+                    ("y", "f4"),
+                    ("z", "f4"),
+                    ("red", "u1"),
+                    ("green", "u1"),
+                    ("blue", "u1"),
+                ],
+            )
+            data["x"] = x
+            data["y"] = y
+            data["z"] = z
+            data["red"] = red
+            data["green"] = green
+            data["blue"] = blue
+
+            PlyData([PlyElement.describe(data, "vertex")], text=False).write(str(input_ply))
+        except Exception:
+            shutil.copy2(ply_path, input_ply)
+        try:
+            monitor_ply_src.write_text(src_key, encoding="utf-8")
+        except Exception:
+            pass
 
     poses = _load_trajectory_poses(trj_path)
     cameras = _build_monitor_cameras_json(poses, cfg)
@@ -376,7 +437,6 @@ class MonitorProtocolServer:
             torch.tensor(message["view_projection_matrix"]), (4, 4)
         ).cuda()
         view_proj[:, 1] = -view_proj[:, 1]
-        view_proj[:, 2] = -view_proj[:, 2]
         render_mode = message.get("render_mode", "RGB")
 
         cam = MiniCamCompat(width, height, fovy, fovx, view, view_proj)
