@@ -140,3 +140,12 @@ def get_median_depth(depth, opacity=None, mask=None, return_std=False):
     if return_std:
         return valid_depth.median(), valid_depth.std(), valid
     return valid_depth.median()
+
+
+def get_loss_normal_consistency(rend_normal, surf_normal, render_alpha):
+    normal_error = 1 - (rend_normal * surf_normal).sum(dim=0, keepdim=True)
+    return (normal_error * render_alpha.detach()).mean()
+
+
+def get_loss_dist(rend_dist):
+    return rend_dist.mean()

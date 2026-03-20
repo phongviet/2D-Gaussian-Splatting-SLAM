@@ -25,10 +25,7 @@ from utils.slam_frontend import FrontEnd
 
 class SLAM:
     def __init__(self, config, save_dir=None):
-        start = torch.cuda.Event(enable_timing=True)
-        end = torch.cuda.Event(enable_timing=True)
-
-        start.record()
+        start_time = time.perf_counter()
 
         self.config = config
         self.renderer_mode = self.config["Training"].get("renderer", "2dgs")
@@ -54,23 +51,7 @@ class SLAM:
             if not display and not wayland_display:
                 Log("GUI disabled: no display detected")
                 self.use_gui = False
-        if (
-            self.use_gui
-            and torch.cuda.is_available()
-            and not self.live_mode
-            and os.environ.get("MONOGS_FORCE_GUI", "0") != "1"
-        ):
-            free_mem, total_mem = torch.cuda.mem_get_info()
-            total_gib = total_mem / (1024**3)
-            free_gib = free_mem / (1024**3)
-            min_free_for_gui = 5 * 1024 * 1024 * 1024
-            if total_mem <= 8 * 1024 * 1024 * 1024 or free_mem < min_free_for_gui:
-                Log(
-                    "GUI disabled: preserving GPU memory for SLAM "
-                    f"({free_gib:.2f} GiB free / {total_gib:.2f} GiB total). "
-                    "Set MONOGS_FORCE_GUI=1 to override."
-                )
-                self.use_gui = False
+
         self.eval_rendering = self.config["Results"]["eval_rendering"]
 
         model_params.sh_degree = 3 if self.use_spherical_harmonics else 0
@@ -80,7 +61,7 @@ class SLAM:
             model_params, model_params.source_path, config=config
         )
         bg_color = [0, 0, 0]
-        self.background = torch.tensor(bg_color, dtype=torch.float32, device="cuda")
+        self.background = torch.tensor(bg_color, dtype=torch.float32)
 
         frontend_queue = mp.Queue()
         backend_queue = mp.Queue()
@@ -125,22 +106,20 @@ class SLAM:
         )
 
         backend_process = mp.Process(target=self.backend.run)
+        backend_process.start()
         if self.use_gui:
             gui_process = mp.Process(target=slam_gui.run, args=(self.params_gui,))
             gui_process.start()
-            time.sleep(5)
-
-        backend_process.start()
+            time.sleep(2)
         self.frontend.run()
         backend_queue.put(["pause"])
 
-        end.record()
-        torch.cuda.synchronize()
         # empty the frontend queue
+        elapsed = max(time.perf_counter() - start_time, 1e-6)
         N_frames = len(self.frontend.cameras)
-        FPS = N_frames / (start.elapsed_time(end) * 0.001)
-        Log("Total time", start.elapsed_time(end) * 0.001, tag="Eval")
-        Log("Total FPS", N_frames / (start.elapsed_time(end) * 0.001), tag="Eval")
+        FPS = N_frames / elapsed
+        Log("Total time", elapsed, tag="Eval")
+        Log("Total FPS", FPS, tag="Eval")
 
         if self.eval_rendering:
             self.gaussians = self.frontend.gaussians
