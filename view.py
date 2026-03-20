@@ -1,672 +1,460 @@
-import argparse
-import importlib
-import json
-import shutil
 import os
-import shlex
-import socket
-import subprocess
 import sys
-import time
-from pathlib import Path
+from argparse import ArgumentParser
+import json
+import socket
+import struct
+import traceback
 from types import SimpleNamespace
-from typing import Optional
 
+import matplotlib.pyplot as plt
 import numpy as np
-from plyfile import PlyData, PlyElement
-
-from utils.renderer_utils import get_renderer_components
-
-
-def _resolve_run_dir(result_dir: str) -> Path:
-    run_dir = Path(result_dir)
-    if run_dir.exists():
-        return run_dir.resolve()
-
-    candidates = sorted(Path("results").glob(f"*/{result_dir}"))
-    if not candidates:
-        raise FileNotFoundError(
-            f"Could not find run directory '{result_dir}'. "
-            "Pass a full path or a timestamp under results/*/."
-        )
-    if len(candidates) > 1:
-        raise FileNotFoundError(
-            f"Found multiple runs matching '{result_dir}': "
-            + ", ".join(str(p) for p in candidates)
-            + ". Please pass an unambiguous path."
-        )
-    return candidates[0].resolve()
+import torch.nn.functional as F
+import torch
+import yaml
 
 
-def _load_yaml(path: Path):
-    try:
-        import yaml
-    except ImportError:
-        return {}
-
-    with open(path, "r", encoding="utf-8") as f:
-        return yaml.safe_load(f)
-
-
-def _load_trajectory_points(trj_path: Path):
-    if not trj_path.exists():
-        return None
-    with open(trj_path, "r", encoding="utf-8") as f:
-        data = json.load(f)
-    poses = data.get("trj_est", [])
-    if not poses:
-        return None
-    pts = []
-    for pose in poses:
-        pose_np = np.asarray(pose, dtype=np.float32)
-        if pose_np.shape != (4, 4):
-            continue
-        pts.append(pose_np[:3, 3])
-    if not pts:
-        return None
-    return np.stack(pts, axis=0)
+def _add_monitor_to_path():
+    monogs_root = os.path.dirname(os.path.abspath(__file__))
+    workspace_root = os.path.dirname(monogs_root)
+    monitor_root = os.path.join(workspace_root, "Gaussian-Splatting-Monitor")
+    if monitor_root not in sys.path:
+        sys.path.insert(0, monitor_root)
+    return monitor_root
 
 
-def _load_trajectory_poses(trj_path: Path):
-    if not trj_path.exists():
-        return []
-    with open(trj_path, "r", encoding="utf-8") as f:
-        data = json.load(f)
-    poses = []
-    for pose in data.get("trj_est", []):
-        pose_np = np.asarray(pose, dtype=np.float32)
-        if pose_np.shape == (4, 4):
-            poses.append(pose_np)
-    return poses
+MONITOR_ROOT = _add_monitor_to_path()
 
 
-def _build_monitor_cameras_json(poses, cfg, fallback_count: int = 32):
-    calib = cfg.get("Dataset", {}).get("Calibration", {}) if isinstance(cfg, dict) else {}
-    width = int(calib.get("width", 640))
-    height = int(calib.get("height", 480))
-    fx = float(calib.get("fx", 525.0))
-    fy = float(calib.get("fy", 525.0))
-
-    cameras = []
-    if poses:
-        for idx, pose in enumerate(poses):
-            rot = pose[:3, :3].tolist()
-            pos = pose[:3, 3].tolist()
-            cameras.append(
-                {
-                    "id": idx,
-                    "img_name": f"frame_{idx:06d}.png",
-                    "width": width,
-                    "height": height,
-                    "fx": fx,
-                    "fy": fy,
-                    "position": [float(pos[0]), float(pos[1]), float(pos[2])],
-                    "rotation": [
-                        [float(rot[0][0]), float(rot[0][1]), float(rot[0][2])],
-                        [float(rot[1][0]), float(rot[1][1]), float(rot[1][2])],
-                        [float(rot[2][0]), float(rot[2][1]), float(rot[2][2])],
-                    ],
-                }
-            )
-    else:
-        for idx in range(fallback_count):
-            cameras.append(
-                {
-                    "id": idx,
-                    "img_name": f"frame_{idx:06d}.png",
-                    "width": width,
-                    "height": height,
-                    "fx": fx,
-                    "fy": fy,
-                    "position": [0.0, 0.0, 0.0],
-                    "rotation": [
-                        [1.0, 0.0, 0.0],
-                        [0.0, 1.0, 0.0],
-                        [0.0, 0.0, 1.0],
-                    ],
-                }
-            )
-    return cameras
-
-
-def _prepare_monitor_scene_dir(run_dir: Path, ply_path: Path, cfg, trj_path: Path) -> Path:
-    scene_dir = run_dir / "monitor_scene"
-    scene_dir.mkdir(parents=True, exist_ok=True)
-
-    input_ply = scene_dir / "input.ply"
-    monitor_ply_src = scene_dir / "input_ply_src.txt"
-    src_key = f"{ply_path.resolve()}|{ply_path.stat().st_mtime_ns}|{ply_path.stat().st_size}"
-    last_key = ""
-    if monitor_ply_src.exists():
-        try:
-            last_key = monitor_ply_src.read_text(encoding="utf-8").strip()
-        except Exception:
-            last_key = ""
-    needs_refresh = (not input_ply.exists()) or (src_key != last_key)
-    if needs_refresh:
-        try:
-            ply = PlyData.read(str(ply_path))
-            vertex = ply["vertex"]
-            names = vertex.data.dtype.names
-            if names is None:
-                raise ValueError("PLY vertex has no fields")
-
-            x = np.asarray(vertex["x"], dtype=np.float32)
-            y = np.asarray(vertex["y"], dtype=np.float32)
-            z = np.asarray(vertex["z"], dtype=np.float32)
-
-            if all(c in names for c in ("red", "green", "blue")):
-                red = np.asarray(vertex["red"], dtype=np.uint8)
-                green = np.asarray(vertex["green"], dtype=np.uint8)
-                blue = np.asarray(vertex["blue"], dtype=np.uint8)
-            elif all(c in names for c in ("f_dc_0", "f_dc_1", "f_dc_2")):
-                f0 = np.asarray(vertex["f_dc_0"], dtype=np.float32)
-                f1 = np.asarray(vertex["f_dc_1"], dtype=np.float32)
-                f2 = np.asarray(vertex["f_dc_2"], dtype=np.float32)
-                rgb = np.stack([f0, f1, f2], axis=-1)
-                rgb = np.clip((rgb * 0.28209479177387814 + 0.5) * 255.0, 0, 255)
-                red = rgb[:, 0].astype(np.uint8)
-                green = rgb[:, 1].astype(np.uint8)
-                blue = rgb[:, 2].astype(np.uint8)
-            else:
-                raise ValueError("PLY has neither RGB nor SH DC fields")
-
-            data = np.empty(
-                x.shape[0],
-                dtype=[
-                    ("x", "f4"),
-                    ("y", "f4"),
-                    ("z", "f4"),
-                    ("red", "u1"),
-                    ("green", "u1"),
-                    ("blue", "u1"),
-                ],
-            )
-            data["x"] = x
-            data["y"] = y
-            data["z"] = z
-            data["red"] = red
-            data["green"] = green
-            data["blue"] = blue
-
-            PlyData([PlyElement.describe(data, "vertex")], text=False).write(str(input_ply))
-        except Exception:
-            shutil.copy2(ply_path, input_ply)
-        try:
-            monitor_ply_src.write_text(src_key, encoding="utf-8")
-        except Exception:
-            pass
-
-    poses = _load_trajectory_poses(trj_path)
-    cameras = _build_monitor_cameras_json(poses, cfg)
-    cameras_json = scene_dir / "cameras.json"
-    with open(cameras_json, "w", encoding="utf-8") as f:
-        json.dump(cameras, f, indent=2)
-
-    return scene_dir
-
-
-def _trajectory_topdown_image(points: Optional[np.ndarray], size: int = 800) -> np.ndarray:
-    try:
-        cv2 = importlib.import_module("cv2")
-    except ImportError:
-        cv2 = None
-
-    canvas = np.zeros((size, size, 3), dtype=np.uint8)
-    if points is None or len(points) < 2:
-        if cv2 is not None:
-            cv2.putText(
-                canvas,
-                "No trajectory",
-                (20, size // 2),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                1.0,
-                (200, 200, 200),
-                2,
-                cv2.LINE_AA,
-            )
-        return canvas
-
-    xy = points[:, [0, 1]]
-    min_xy = xy.min(axis=0)
-    max_xy = xy.max(axis=0)
-    span = np.maximum(max_xy - min_xy, 1e-6)
-    margin = 0.08
-    usable = (1.0 - 2.0 * margin) * size
-    scale = usable / np.max(span)
-    centered = (xy - min_xy) * scale
-
-    px = (centered[:, 0] + margin * size).astype(np.int32)
-    py = (size - 1 - (centered[:, 1] + margin * size)).astype(np.int32)
-    if cv2 is not None:
-        poly = np.stack([px, py], axis=1).reshape(-1, 1, 2)
-        cv2.polylines(canvas, [poly], False, (0, 220, 255), 2, cv2.LINE_AA)
-        cv2.circle(canvas, (px[0], py[0]), 6, (0, 255, 0), -1, cv2.LINE_AA)
-        cv2.circle(canvas, (px[-1], py[-1]), 6, (0, 0, 255), -1, cv2.LINE_AA)
-        cv2.putText(
-            canvas,
-            "Trajectory (top-down XY)",
-            (20, 35),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.9,
-            (220, 220, 220),
-            2,
-            cv2.LINE_AA,
-        )
-    return canvas
-
-
-def _pick_render_mode(render_mode, render_items):
-    if isinstance(render_mode, int) and 0 <= render_mode < len(render_items):
-        return render_items[render_mode]
-    if isinstance(render_mode, str) and render_mode in render_items:
-        return render_mode
-    return "RGB"
-
-
-def _render_item_image(render_pkg, mode: str, trajectory_img: np.ndarray):
-    import torch
-
-    try:
-        cv2 = importlib.import_module("cv2")
-    except ImportError:
-        cv2 = None
-
-    if mode == "Depth":
-        depth_key = "depth" if "depth" in render_pkg else "mean_depth"
-        depth = render_pkg[depth_key][0].detach().float().cpu().numpy()
-        max_depth = max(float(depth.max()), 1e-6)
-        depth_u8 = np.clip(depth / max_depth * 255.0, 0, 255).astype(np.uint8)
-        if cv2 is None:
-            return np.repeat(depth_u8[:, :, None], 3, axis=2)
-        depth_img = cv2.applyColorMap(depth_u8, cv2.COLORMAP_TURBO)
-        return cv2.cvtColor(depth_img, cv2.COLOR_BGR2RGB)
-
-    if mode == "Normal":
-        normal = render_pkg.get("rend_normal")
-        if normal is None:
-            normal = render_pkg.get("surf_normal")
-        if normal is None:
-            return np.zeros_like(trajectory_img)
-        normal_img = normal.detach().float().permute(1, 2, 0).cpu().numpy()
-        normal_img = np.clip((normal_img + 1.0) * 0.5, 0.0, 1.0)
-        return (normal_img * 255.0).astype(np.uint8)
-
-    if mode == "Opacity":
-        opacity = render_pkg["opacity"][0].detach().float().cpu().numpy()
-        max_opacity = max(float(opacity.max()), 1e-6)
-        opacity_u8 = np.clip(opacity / max_opacity * 255.0, 0, 255).astype(np.uint8)
-        if cv2 is None:
-            return np.repeat(opacity_u8[:, :, None], 3, axis=2)
-        opacity_img = cv2.applyColorMap(opacity_u8, cv2.COLORMAP_TURBO)
-        return cv2.cvtColor(opacity_img, cv2.COLOR_BGR2RGB)
-
-    if mode == "Trajectory":
-        return trajectory_img
-
-    rgb = (
-        (torch.clamp(render_pkg["render"], min=0.0, max=1.0) * 255.0)
-        .byte()
-        .permute(1, 2, 0)
-        .contiguous()
-        .cpu()
-        .numpy()
-    )
-    return rgb
-
-
-def _fallback_image(width: int, height: int, mode: str, trajectory_img: np.ndarray) -> np.ndarray:
-    image = np.zeros((height, width, 3), dtype=np.uint8)
-    if mode == "Trajectory" and trajectory_img is not None:
-        try:
-            cv2 = importlib.import_module("cv2")
-            image = cv2.resize(trajectory_img, (width, height), interpolation=cv2.INTER_LINEAR)
-        except ImportError:
-            y = np.linspace(0, trajectory_img.shape[0] - 1, height).astype(np.int32)
-            x = np.linspace(0, trajectory_img.shape[1] - 1, width).astype(np.int32)
-            image = trajectory_img[y][:, x]
-    return np.ascontiguousarray(image)
-
-
-def _launch_viewer(viewer_cmd: str):
-    if not viewer_cmd:
-        return None
-    return subprocess.Popen(shlex.split(viewer_cmd))
-
-
-def _init_renderer(ply_path: Path, white_background: bool, renderer_mode: str):
-    import torch
-
-    render, gaussian_model_cls = get_renderer_components(renderer_mode)
-    gaussians = gaussian_model_cls(sh_degree=3)
-    gaussians.load_ply(str(ply_path))
-    pipe = SimpleNamespace(convert_SHs_python=False, compute_cov3D_python=False)
-    bg_color = [1.0, 1.0, 1.0] if white_background else [0.0, 0.0, 0.0]
-    background = torch.tensor(bg_color, dtype=torch.float32, device="cuda")
-    return render, gaussians, pipe, background
-
-
-class MiniCamCompat:
+class MiniCam:
     def __init__(
         self,
         width,
         height,
         fovy,
         fovx,
+        znear,
+        zfar,
         world_view_transform,
         full_proj_transform,
     ):
-        import torch
-
         self.image_width = width
         self.image_height = height
         self.FoVy = fovy
         self.FoVx = fovx
+        self.znear = znear
+        self.zfar = zfar
         self.world_view_transform = world_view_transform
         self.full_proj_transform = full_proj_transform
-        self.cam_rot_delta = torch.zeros(3, device="cuda")
-        self.cam_trans_delta = torch.zeros(3, device="cuda")
         view_inv = torch.inverse(self.world_view_transform)
         self.camera_center = view_inv[3][:3]
         self.projection_matrix = torch.bmm(
             self.world_view_transform.unsqueeze(0).inverse(),
             self.full_proj_transform.unsqueeze(0),
         ).squeeze(0)
+        self.cam_rot_delta = torch.zeros(3, device="cuda", dtype=torch.float32)
+        self.cam_trans_delta = torch.zeros(3, device="cuda", dtype=torch.float32)
 
 
-class MonitorProtocolServer:
-    def __init__(self, host: str, port: int):
-        self.host = host
-        self.port = port
-        self.listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self.listener.bind((host, port))
-        self.listener.listen()
-        self.listener.settimeout(0)
+class NetworkGUI:
+    def __init__(self):
+        self.host = "127.0.0.1"
+        self.port = 6009
         self.conn = None
+        self.addr = None
+        self.listener = None
 
     @staticmethod
-    def _send_json_data(conn, data):
-        payload = json.dumps(data).encode("utf-8")
-        conn.sendall(len(payload).to_bytes(4, "little"))
-        conn.sendall(payload)
+    def _create_listener():
+        listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        return listener
+
+    def init(self, wish_host, wish_port):
+        self.host = wish_host
+        self.port = wish_port
+        if self.listener is not None:
+            try:
+                self.listener.close()
+            except Exception:
+                pass
+        self.listener = self._create_listener()
+        self.listener.bind((self.host, self.port))
+        self.listener.listen()
+        self.listener.settimeout(0)
+
+    @staticmethod
+    def send_json_data(conn, data):
+        serialized_data = json.dumps(data)
+        bytes_data = serialized_data.encode("utf-8")
+        conn.sendall(struct.pack("I", len(bytes_data)))
+        conn.sendall(bytes_data)
 
     def try_connect(self, render_items):
-        if self.conn is not None:
+        if self.listener is None:
             return
         try:
-            self.conn, _addr = self.listener.accept()
+            self.conn, self.addr = self.listener.accept()
+            print(f"\nConnected by {self.addr}")
             self.conn.settimeout(None)
-            self._send_json_data(self.conn, render_items)
+            self.send_json_data(self.conn, render_items)
         except Exception:
-            return
+            pass
 
-    def receive(self):
-        import torch
-
+    def read(self):
         if self.conn is None:
-            return None, None, None, None, None
-
-        def _recv_exact(n):
-            buf = b""
-            conn = self.conn
-            if conn is None:
-                raise ConnectionError("Socket not connected")
-            while len(buf) < n:
-                chunk = conn.recv(n - len(buf))
-                if not chunk:
-                    raise ConnectionError("Socket closed")
-                buf += chunk
-            return buf
-
-        raw_len = _recv_exact(4)
-        msg_len = int.from_bytes(raw_len, "little")
-        message = json.loads(_recv_exact(msg_len).decode("utf-8"))
-
-        width = message["resolution_x"]
-        height = message["resolution_y"]
-        if width == 0 or height == 0:
-            return None, None, None, None, None
-
-        fovy = message["fov_y"]
-        fovx = message["fov_x"]
-        scaling_modifier = message["scaling_modifier"]
-        view = torch.reshape(torch.tensor(message["view_matrix"]), (4, 4)).cuda()
-        view[:, 1] = -view[:, 1]
-        view[:, 2] = -view[:, 2]
-        view_proj = torch.reshape(
-            torch.tensor(message["view_projection_matrix"]), (4, 4)
-        ).cuda()
-        view_proj[:, 1] = -view_proj[:, 1]
-        render_mode = message.get("render_mode", "RGB")
-
-        cam = MiniCamCompat(width, height, fovy, fovx, view, view_proj)
-        do_training = bool(message.get("train", False))
-        keep_alive = bool(message.get("keep_alive", True))
-        return cam, do_training, keep_alive, scaling_modifier, render_mode
+            raise RuntimeError("No active monitor connection")
+        message_length = self.conn.recv(4)
+        if not message_length:
+            raise ConnectionError("Monitor disconnected")
+        message_length = int.from_bytes(message_length, "little")
+        message = self.conn.recv(message_length)
+        if not message:
+            raise ConnectionError("Monitor disconnected")
+        return json.loads(message.decode("utf-8"))
 
     def send(self, message_bytes, verify, metrics):
         if self.conn is None:
-            return
-        if message_bytes is not None:
+            raise RuntimeError("No active monitor connection")
+        if message_bytes != None:
             self.conn.sendall(message_bytes)
         self.conn.sendall(len(verify).to_bytes(4, "little"))
-        self.conn.sendall(verify.encode("ascii"))
-        self._send_json_data(self.conn, metrics)
+        self.conn.sendall(bytes(verify, "ascii"))
+        self.send_json_data(self.conn, metrics)
 
-    def close_connection(self):
+    def disconnect(self):
         if self.conn is not None:
             try:
                 self.conn.close()
             except Exception:
                 pass
-            self.conn = None
+        self.conn = None
+        self.addr = None
 
-    def close(self):
-        self.close_connection()
-        try:
-            self.listener.close()
-        except Exception:
-            pass
+    def receive(self):
+        message = self.read()
+        width = message["resolution_x"]
+        height = message["resolution_y"]
+
+        if width != 0 and height != 0:
+            custom_cam = None
+            do_training = False
+            keep_alive = False
+            scaling_modifier = 1.0
+            render_mode = 0
+            try:
+                do_training = bool(message["train"])
+                fovy = message["fov_y"]
+                fovx = message["fov_x"]
+                znear = message["z_near"]
+                zfar = message["z_far"]
+                keep_alive = bool(message["keep_alive"])
+                scaling_modifier = message["scaling_modifier"]
+                world_view_transform = torch.reshape(
+                    torch.tensor(message["view_matrix"], dtype=torch.float32), (4, 4)
+                ).cuda()
+                world_view_transform[:, 1] = -world_view_transform[:, 1]
+                world_view_transform[:, 2] = -world_view_transform[:, 2]
+                full_proj_transform = torch.reshape(
+                    torch.tensor(
+                        message["view_projection_matrix"], dtype=torch.float32
+                    ),
+                    (4, 4),
+                ).cuda()
+                full_proj_transform[:, 1] = -full_proj_transform[:, 1]
+                custom_cam = MiniCam(
+                    width,
+                    height,
+                    fovy,
+                    fovx,
+                    znear,
+                    zfar,
+                    world_view_transform,
+                    full_proj_transform,
+                )
+                render_mode = message["render_mode"]
+            except Exception:
+                print("")
+                traceback.print_exc()
+            return custom_cam, do_training, keep_alive, scaling_modifier, render_mode
+        else:
+            return None, None, None, None, None
 
 
-def main():
-    parser = argparse.ArgumentParser(
-        description="View MonoGS output with Gaussian-Splatting-Monitor protocol"
+network_gui = NetworkGUI()
+
+
+def gradient_map(image):
+    sobel_x = (
+        torch.tensor([[-1, 0, 1], [-2, 0, 2], [-1, 0, 1]])
+        .float()
+        .unsqueeze(0)
+        .unsqueeze(0)
+        .cuda()
+        / 4
     )
-    parser.add_argument(
-        "--result-dir",
-        type=str,
-        required=True,
-        help=(
-            "Run directory, e.g. results/tum_rgbd_dataset_freiburg1_desk/"
-            "2026-03-18-18-36-41"
-        ),
+    sobel_y = (
+        torch.tensor([[-1, -2, -1], [0, 0, 0], [1, 2, 1]])
+        .float()
+        .unsqueeze(0)
+        .unsqueeze(0)
+        .cuda()
+        / 4
     )
-    parser.add_argument(
-        "--monitor-root",
-        type=str,
-        default=str((Path(__file__).resolve().parent.parent / "Gaussian-Splatting-Monitor")),
-        help="Path to Gaussian-Splatting-Monitor repository",
+
+    grad_x = torch.cat(
+        [F.conv2d(image[i].unsqueeze(0), sobel_x, padding=1) for i in range(image.shape[0])]
     )
-    parser.add_argument(
-        "--ply",
-        type=str,
-        default="",
-        help="Optional explicit point cloud path (defaults to point_cloud/final/point_cloud.ply)",
+    grad_y = torch.cat(
+        [F.conv2d(image[i].unsqueeze(0), sobel_y, padding=1) for i in range(image.shape[0])]
     )
-    parser.add_argument(
-        "--trajectory",
-        type=str,
-        default="",
-        help="Optional explicit trajectory JSON path (defaults to plot/trj_final.json)",
+    magnitude = torch.sqrt(grad_x**2 + grad_y**2)
+    magnitude = magnitude.norm(dim=0, keepdim=True)
+
+    return magnitude
+
+
+def unproject_depth_map(depth_map, camera):
+    depth_map = depth_map.squeeze()
+    height, width = depth_map.shape
+    x = torch.linspace(0, width - 1, width).cuda()
+    y = torch.linspace(0, height - 1, height).cuda()
+    Y, X = torch.meshgrid(y, x, indexing="ij")
+
+    depth_flat = depth_map.reshape(-1)
+    X_flat = X.reshape(-1)
+    Y_flat = Y.reshape(-1)
+
+    X_norm = (X_flat / (width - 1)) * 2 - 1
+    Y_norm = (Y_flat / (height - 1)) * 2 - 1
+
+    points_camera = torch.stack([X_norm, Y_norm, depth_flat], dim=-1)
+
+    K_matrix = camera.projection_matrix
+    f1 = K_matrix[2, 2]
+    f2 = K_matrix[3, 2]
+
+    sdepth = (f1 * points_camera[..., 2:3] + f2) / (points_camera[..., 2:3] + 1e-8)
+
+    points_camera = torch.cat((points_camera[..., 0:2], sdepth), dim=-1)
+    points_camera = points_camera.view((height, width, 3))
+    points_camera = torch.cat(
+        [points_camera, torch.ones_like(points_camera[:, :, :1])], dim=-1
     )
-    parser.add_argument("--ip", type=str, default="127.0.0.1")
-    parser.add_argument("--port", type=int, default=6009)
-    parser.add_argument(
-        "--render-items",
-        type=str,
-        default="RGB,Depth,Normal,Opacity,Trajectory",
-        help="Comma-separated render item list exposed to Monitor viewer",
-    )
-    parser.add_argument(
-        "--renderer",
-        type=str,
-        choices=["2dgs", "3dgs"],
-        default="2dgs",
-        help="Renderer mode used for visualization",
-    )
-    parser.add_argument(
-        "--viewer-cmd",
-        type=str,
-        default="",
-        help="Optional command to auto-start SIBR viewer",
-    )
-    parser.add_argument(
-        "--timeout-sec",
-        type=float,
-        default=120.0,
-        help="Exit if no successful viewing activity within this many seconds (<=0 disables)",
-    )
-    args = parser.parse_args()
+    points_world = torch.matmul(points_camera, camera.full_proj_transform.inverse())
 
-    run_dir = _resolve_run_dir(args.result_dir)
-    ply_path = Path(args.ply) if args.ply else run_dir / "point_cloud" / "final" / "point_cloud.ply"
-    trj_path = Path(args.trajectory) if args.trajectory else run_dir / "plot" / "trj_final.json"
+    points_world = points_world[:, :, :3] / points_world[:, :, 3:]
+    points_world = points_world.view((height, width, 3))
 
-    if not ply_path.exists():
-        raise FileNotFoundError(f"Point cloud not found: {ply_path}")
+    return points_world
 
-    config_path = run_dir / "config.yml"
-    cfg = {}
-    white_background = False
-    if config_path.exists():
-        cfg = _load_yaml(config_path)
-        white_background = bool(cfg.get("model_params", {}).get("white_background", False))
 
-    trajectory_points = _load_trajectory_points(trj_path)
-    trajectory_img = _trajectory_topdown_image(trajectory_points)
-    monitor_scene_dir = _prepare_monitor_scene_dir(run_dir, ply_path, cfg, trj_path)
+def depth_to_normal(depth_map, camera):
+    depth_map = depth_map.squeeze()
+    height, width = depth_map.shape
+    points_world = torch.zeros((height + 1, width + 1, 3)).to(depth_map.device)
+    points_world[:height, :width, :] = unproject_depth_map(depth_map, camera)
 
-    monitor_root = Path(args.monitor_root).resolve()
-    if not monitor_root.exists():
-        raise FileNotFoundError(f"Gaussian-Splatting-Monitor not found: {monitor_root}")
-    monitor_server = MonitorProtocolServer(args.ip, args.port)
+    p1 = points_world[:-1, :-1, :]
+    p2 = points_world[1:, :-1, :]
+    p3 = points_world[:-1, 1:, :]
 
-    render_items = [x.strip() for x in args.render_items.split(",") if x.strip()]
-    if not render_items:
-        render_items = ["RGB", "Depth", "Normal", "Opacity", "Trajectory"]
+    v1 = p2 - p1
+    v2 = p3 - p1
 
-    render_func = None
-    gaussians = None
-    pipe = None
-    background = None
-    renderer_error = ""
+    normals = torch.cross(v1, v2, dim=-1)
+    normals = normals / (torch.norm(normals, dim=-1, keepdim=True) + 1e-8)
 
-    viewer_proc = _launch_viewer(args.viewer_cmd)
-    print(f"Run directory: {run_dir}")
-    print(f"Point cloud: {ply_path}")
-    if trj_path.exists():
-        print(f"Trajectory: {trj_path}")
+    return normals
+
+
+def colormap(map, cmap="turbo"):
+    if hasattr(plt, "colormaps"):
+        cmap_values = plt.colormaps[cmap](np.linspace(0, 1, 256))[:, :3]
     else:
-        print("Trajectory: not found")
-    print(f"Monitor scene dir: {monitor_scene_dir}")
-    print(f"Listening for Monitor viewer on {args.ip}:{args.port}")
+        cmap_values = plt.cm.get_cmap(cmap)(np.linspace(0, 1, 256))[:, :3]
+    colors = torch.tensor(cmap_values, device=map.device, dtype=torch.float32)
+    map = (map - map.min()) / (map.max() - map.min())
+    map = (map * 255).round().long().squeeze()
+    map = colors[map].permute(2, 0, 1)
+    return map
 
-    start = time.time()
-    had_connection = False
-    had_render = False
 
-    try:
-        while True:
-            if args.timeout_sec > 0 and (time.time() - start) > args.timeout_sec:
-                status = "after connection" if had_connection else "without any viewer connection"
-                print(f"Timed out after {args.timeout_sec:.1f}s {status}.")
-                return
+def render_net_image(render_pkg, render_items, render_mode, camera):
+    output = render_items[render_mode].lower()
+    if output == "alpha":
+        net_image = render_pkg["alpha"]
+        net_image = (net_image - net_image.min()) / (net_image.max() - net_image.min())
+    elif output == "depth":
+        net_image = render_pkg["mean_depth"]
+        net_image = (net_image - net_image.min()) / (net_image.max() - net_image.min())
+    elif output == "normal":
+        net_image = depth_to_normal(render_pkg["mean_depth"], camera).permute(2, 0, 1)
+        net_image = (net_image + 1) / 2
+    elif output == "edge":
+        net_image = gradient_map(render_pkg["render"])
+    elif output == "curvature":
+        net_image = gradient_map(
+            depth_to_normal(render_pkg["mean_depth"], camera).permute(2, 0, 1)
+        )
+    else:
+        net_image = render_pkg["render"]
 
-            if monitor_server.conn is None:
-                monitor_server.try_connect(render_items)
-                if monitor_server.conn is not None:
-                    had_connection = True
+    if net_image.shape[0] == 1:
+        net_image = colormap(net_image)
+    return net_image
 
-            while monitor_server.conn is not None:
-                if args.timeout_sec > 0 and (time.time() - start) > args.timeout_sec:
-                    print(f"Timed out after {args.timeout_sec:.1f}s while serving viewer.")
-                    return
+
+def _resolve_config(result_path):
+    candidates = [
+        os.path.join(result_path, "config.yml"),
+        os.path.join(result_path, "config.yaml"),
+        os.path.join(os.path.dirname(result_path), "config.yml"),
+        os.path.join(os.path.dirname(result_path), "config.yaml"),
+    ]
+    for c in candidates:
+        if os.path.isfile(c):
+            with open(c, "r", encoding="utf-8") as f:
+                return yaml.safe_load(f), c
+    return {}, None
+
+
+def _resolve_ply_path(result_path, iteration):
+    if os.path.isfile(result_path) and result_path.endswith(".ply"):
+        return result_path
+
+    if iteration == "final":
+        candidates = [
+            os.path.join(result_path, "point_cloud", "final", "point_cloud.ply"),
+            os.path.join(result_path, "final", "point_cloud.ply"),
+            os.path.join(result_path, "point_cloud.ply"),
+        ]
+    else:
+        iter_name = f"iteration_{iteration}"
+        candidates = [
+            os.path.join(result_path, "point_cloud", iter_name, "point_cloud.ply"),
+            os.path.join(result_path, iter_name, "point_cloud.ply"),
+        ]
+
+    for c in candidates:
+        if os.path.isfile(c):
+            return c
+
+    raise FileNotFoundError(
+        f"Could not find point cloud PLY in '{result_path}' for iteration '{iteration}'."
+    )
+
+
+def _resolve_monitor_verify_path(result_path):
+    monitor_scene = os.path.join(result_path, "monitor_scene")
+    if os.path.isdir(monitor_scene):
+        return monitor_scene
+    return result_path
+
+
+def _load_components(renderer_mode):
+    if renderer_mode == "3dgs":
+        from gaussian_splatting.gaussian_renderer.render_3d import render
+        from gaussian_splatting.scene.gaussian_model_3d import GaussianModel
+    else:
+        from gaussian_splatting.gaussian_renderer.render_2d import render
+        from gaussian_splatting.scene.gaussian_model import GaussianModel
+
+    return render, GaussianModel
+
+
+def _wrap_render_for_monitor(render_fn):
+    def _render_with_monitor_compat(
+        viewpoint_camera, pc, pipe, bg_color, scaling_modifier=1.0
+    ):
+        render_pkg = render_fn(
+            viewpoint_camera, pc, pipe, bg_color, scaling_modifier
+        )
+        if "mean_depth" not in render_pkg and "depth" in render_pkg:
+            render_pkg["mean_depth"] = render_pkg["depth"]
+        if "alpha" not in render_pkg and "opacity" in render_pkg:
+            render_pkg["alpha"] = render_pkg["opacity"]
+        return render_pkg
+
+    return _render_with_monitor_compat
+
+
+def view(dataset, pipe, gaussians, render_fn):
+    bg_color = [1, 1, 1] if dataset.white_background else [0, 0, 0]
+    background = torch.tensor(bg_color, dtype=torch.float32, device="cuda")
+
+    while True:
+        with torch.no_grad():
+            if network_gui.conn == None:
+                network_gui.try_connect(dataset.render_items)
+            while network_gui.conn != None:
                 try:
-                    (
-                        custom_cam,
-                        _do_training,
-                        _keep_alive,
-                        scaling_modifier,
-                        render_mode,
-                    ) = monitor_server.receive()
-
                     net_image_bytes = None
-                    if custom_cam is not None:
-                        if render_func is None and not renderer_error:
-                            try:
-                                render_func, gaussians, pipe, background = _init_renderer(
-                                    ply_path, white_background, args.renderer
-                                )
-                            except Exception as e:
-                                renderer_error = str(e)
-
-                        if render_func is not None:
-                            import torch
-
-                            assert gaussians is not None
-                            assert pipe is not None
-                            assert background is not None
-                            custom_cam.cam_rot_delta = torch.zeros(3, device="cuda")
-                            custom_cam.cam_trans_delta = torch.zeros(3, device="cuda")
-                            render_pkg = render_func(
-                                custom_cam,
-                                gaussians,
-                                pipe,
-                                background,
-                                scaling_modifier=float(
-                                    1.0 if scaling_modifier is None else scaling_modifier
-                                ),
-                            )
-                            mode = _pick_render_mode(render_mode, render_items)
-                            image = _render_item_image(render_pkg, mode, trajectory_img)
-                            if image.ndim == 2:
-                                image = np.repeat(image[:, :, None], 3, axis=2)
-                            net_image_bytes = memoryview(np.ascontiguousarray(image))
-                            had_render = True
-                        else:
-                            mode = _pick_render_mode(render_mode, render_items)
-                            fallback = _fallback_image(
-                                int(custom_cam.image_width),
-                                int(custom_cam.image_height),
-                                mode,
-                                trajectory_img,
-                            )
-                            net_image_bytes = memoryview(fallback)
-
+                    custom_cam, do_training, keep_alive, scaling_modifer, render_mode = network_gui.receive()
+                    if custom_cam != None:
+                        render_pkg = render_fn(custom_cam, gaussians, pipe, background, scaling_modifer)
+                        net_image = render_net_image(render_pkg, dataset.render_items, render_mode, custom_cam)
+                        net_image_bytes = memoryview((torch.clamp(net_image, min=0, max=1.0) * 255).byte().permute(1, 2, 0).contiguous().cpu().numpy())
                     metrics_dict = {
-                        "#": int(0 if gaussians is None else gaussians.get_opacity.shape[0]),
-                        "trajectory_points": int(0 if trajectory_points is None else trajectory_points.shape[0]),
-                        "rendered": int(had_render),
-                        "renderer_ready": int(render_func is not None),
-                        "renderer_error": float(1.0 if renderer_error else 0.0),
+                        "#": gaussians.get_opacity.shape[0]
+                        # Add more metrics as needed
                     }
-                    monitor_server.send(net_image_bytes, str(monitor_scene_dir), metrics_dict)
-                except Exception:
-                    monitor_server.close_connection()
+                    network_gui.send(net_image_bytes, dataset.source_path, metrics_dict)
+                except Exception as e:
+                    network_gui.disconnect()
                     break
-
-            if viewer_proc is not None and viewer_proc.poll() is not None:
-                if had_connection:
-                    print("Viewer process exited.")
-                    return
-
-            time.sleep(0.01)
-    finally:
-        monitor_server.close()
-        if viewer_proc is not None and viewer_proc.poll() is None:
-            viewer_proc.terminate()
 
 
 if __name__ == "__main__":
-    main()
+    parser = ArgumentParser(description="MonoGS viewer for Gaussian-Splatting-Monitor")
+    parser.add_argument("result_path", type=str, help="MonoGS result directory or point_cloud.ply path")
+    parser.add_argument("--ip", type=str, default="127.0.0.1")
+    parser.add_argument("--port", type=int, default=6009)
+    parser.add_argument("--iteration", type=str, default="final")
+    parser.add_argument("--renderer", type=str, choices=["auto", "2dgs", "3dgs"], default="auto")
+    parser.add_argument("--white_background", action="store_true")
+    parser.add_argument("--sh_degree", type=int, default=None)
+    args = parser.parse_args(sys.argv[1:])
+
+    result_path = os.path.abspath(args.result_path)
+    config, config_path = _resolve_config(result_path)
+    renderer_mode = args.renderer
+    if renderer_mode == "auto":
+        renderer_mode = str(config.get("Training", {}).get("renderer", "2dgs")).lower()
+        if renderer_mode not in {"2dgs", "3dgs"}:
+            renderer_mode = "2dgs"
+
+    render_fn, GaussianModel = _load_components(renderer_mode)
+    render_fn = _wrap_render_for_monitor(render_fn)
+
+    sh_degree = args.sh_degree
+    if sh_degree is None:
+        sh_degree = int(config.get("model_params", {}).get("sh_degree", 0))
+
+    gaussians = GaussianModel(sh_degree)
+    ply_path = _resolve_ply_path(result_path, args.iteration)
+    gaussians.load_ply(ply_path)
+
+    render_items = ["RGB", "Alpha", "Depth", "Normal", "Curvature", "Edge"]
+    white_background = args.white_background
+    if not white_background:
+        white_background = bool(config.get("model_params", {}).get("white_background", False))
+    dataset = SimpleNamespace(
+        white_background=white_background,
+        render_items=render_items,
+        source_path=_resolve_monitor_verify_path(result_path),
+    )
+    pipe = SimpleNamespace(
+        convert_SHs_python=bool(config.get("pipeline_params", {}).get("convert_SHs_python", False)),
+        compute_cov3D_python=bool(config.get("pipeline_params", {}).get("compute_cov3D_python", False)),
+    )
+
+    print("View:", result_path)
+    print("Config:", config_path if config_path else "<none>")
+    print("Renderer:", renderer_mode)
+    print("PLY:", ply_path)
+    network_gui.init(args.ip, args.port)
+
+    view(dataset, pipe, gaussians, render_fn)
+
+    print("\nViewing complete.")
