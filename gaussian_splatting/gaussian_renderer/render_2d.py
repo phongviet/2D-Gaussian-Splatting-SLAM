@@ -1,0 +1,1 @@
+from gaussian_splatting.gaussian_renderer import render

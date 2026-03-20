@@ -634,7 +634,12 @@ class SLAM_GUI:
 
             self.gaussians_gl.xyz = self.gaussian_cur.get_xyz.cpu().numpy()
             self.gaussians_gl.opacity = self.gaussian_cur.get_opacity.cpu().numpy()
-            self.gaussians_gl.scale = self.gaussian_cur.get_scaling.cpu().numpy()
+            scale_np = self.gaussian_cur.get_scaling.cpu().numpy()
+            if scale_np.shape[1] == 2:
+                scale_np = np.concatenate(
+                    [scale_np, np.ones_like(scale_np[:, :1])], axis=1
+                )
+            self.gaussians_gl.scale = scale_np
             self.gaussians_gl.rot = self.gaussian_cur.get_rotation.cpu().numpy()
             self.gaussians_gl.sh = self.gaussian_cur.get_features.cpu().numpy()[:, 0, :]
 

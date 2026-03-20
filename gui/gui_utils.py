@@ -179,6 +179,8 @@ class GaussianPacket:
     def build_covariance_from_scaling_rotation(
         self, scaling, scaling_modifier, rotation
     ):
+        if scaling.shape[-1] == 2:
+            scaling = torch.cat([scaling, torch.ones_like(scaling[:, :1])], dim=-1)
         L = build_scaling_rotation(scaling_modifier * scaling, rotation)
         actual_covariance = L @ L.transpose(1, 2)
         symm = strip_symmetric(actual_covariance)
@@ -211,9 +213,11 @@ class ParamsGUI:
         gaussians=None,
         q_main2vis=None,
         q_vis2main=None,
+        renderer_mode="2dgs",
     ):
         self.pipe = pipe
         self.background = background
         self.gaussians = gaussians
         self.q_main2vis = q_main2vis
         self.q_vis2main = q_vis2main
+        self.renderer_mode = renderer_mode

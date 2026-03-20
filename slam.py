@@ -18,6 +18,7 @@ from utils.dataset import load_dataset
 from utils.eval_utils import eval_ate, eval_rendering, save_gaussians
 from utils.logging_utils import Log
 from utils.multiprocessing_utils import FakeQueue
+from utils.renderer_utils import resolve_renderer_mode
 from utils.slam_backend import BackEnd
 from utils.slam_frontend import FrontEnd
 
@@ -30,6 +31,7 @@ class SLAM:
         start.record()
 
         self.config = config
+        self.renderer_mode = self.config["Training"].get("renderer", "2dgs")
         self.save_dir = save_dir
         model_params = munchify(config["model_params"])
         opt_params = munchify(config["opt_params"])
@@ -119,6 +121,7 @@ class SLAM:
             gaussians=None,
             q_main2vis=q_main2vis,
             q_vis2main=q_vis2main,
+            renderer_mode=self.renderer_mode,
         )
 
         backend_process = mp.Process(target=self.backend.run)
@@ -160,6 +163,7 @@ class SLAM:
                 self.background,
                 kf_indices=kf_indices,
                 iteration="before_opt",
+                renderer_mode=self.renderer_mode,
             )
             columns = ["tag", "psnr", "ssim", "lpips", "RMSE ATE", "FPS"]
             metrics_table = wandb.Table(columns=columns)
@@ -178,7 +182,7 @@ class SLAM:
                     frontend_queue.get_nowait()
                 except queue.Empty:
                     break
-            backend_queue.put(["color_refinement"])
+            #backend_queue.put(["color_refinement"]) #no need
             while True:
                 try:
                     data = frontend_queue.get(timeout=1.0)
@@ -189,26 +193,26 @@ class SLAM:
                     self.gaussians = gaussians
                     break
 
-            rendering_result = eval_rendering(
-                self.frontend.cameras,
-                self.gaussians,
-                self.dataset,
-                self.save_dir,
-                self.pipeline_params,
-                self.background,
-                kf_indices=kf_indices,
-                iteration="after_opt",
-            )
-            metrics_table.add_data(
-                "After",
-                rendering_result["mean_psnr"],
-                rendering_result["mean_ssim"],
-                rendering_result["mean_lpips"],
-                ATE,
-                FPS,
-            )
-            wandb.log({"Metrics": metrics_table})
-            save_gaussians(self.gaussians, self.save_dir, "final_after_opt", final=True)
+            # rendering_result = eval_rendering(
+            #     self.frontend.cameras,
+            #     self.gaussians,
+            #     self.dataset,
+            #     self.save_dir,
+            #     self.pipeline_params,
+            #     self.background,
+            #     kf_indices=kf_indices,
+            #     iteration="after_opt",
+            # )
+            # metrics_table.add_data(
+            #     "After",
+            #     rendering_result["mean_psnr"],
+            #     rendering_result["mean_ssim"],
+            #     rendering_result["mean_lpips"],
+            #     ATE,
+            #     FPS,
+            # )
+            # wandb.log({"Metrics": metrics_table})
+            #save_gaussians(self.gaussians, self.save_dir, "final_after_opt", final=True)
 
         backend_queue.put(["stop"])
         backend_process.join()
@@ -227,15 +231,19 @@ if __name__ == "__main__":
     parser = ArgumentParser(description="Training script parameters")
     parser.add_argument("--config", type=str)
     parser.add_argument("--eval", action="store_true")
+    parser.add_argument(
+        "--renderer",
+        type=str,
+        choices=["2dgs", "3dgs"],
+        default="2dgs",
+    )
 
     args = parser.parse_args(sys.argv[1:])
 
     mp.set_start_method("spawn")
 
-    with open(args.config, "r") as yml:
-        config = yaml.safe_load(yml)
-
     config = load_config(args.config)
+    resolve_renderer_mode(config, args.renderer)
     save_dir = None
 
     if args.eval:

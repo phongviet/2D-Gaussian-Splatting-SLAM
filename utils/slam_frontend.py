@@ -5,15 +5,14 @@ import numpy as np
 import torch
 import torch.multiprocessing as mp
 
-from gaussian_splatting.gaussian_renderer import render
 from gaussian_splatting.utils.graphics_utils import getProjectionMatrix2, getWorld2View2
-from gaussian_splatting.scene.gaussian_model import GaussianModel
 from gui import gui_utils
 from utils.camera_utils import Camera
 from utils.eval_utils import eval_ate, save_gaussians
 from utils.logging_utils import Log
 from utils.multiprocessing_utils import clone_obj
 from utils.pose_utils import update_pose
+from utils.renderer_utils import get_renderer_components
 from utils.slam_utils import get_loss_tracking, get_median_depth
 
 
@@ -44,6 +43,10 @@ class FrontEnd(mp.Process):
         self.cameras = dict()
         self.device = "cuda:0"
         self.pause = False
+        self.renderer_mode = self.config["Training"].get("renderer", "2dgs")
+        self.render, self.gaussian_model_cls = get_renderer_components(
+            self.renderer_mode
+        )
 
     def set_hyperparams(self):
         self.save_dir = self.config["Results"]["save_dir"]
@@ -166,7 +169,7 @@ class FrontEnd(mp.Process):
 
         pose_optimizer = torch.optim.Adam(opt_params)
         for tracking_itr in range(self.tracking_itr_num):
-            render_pkg = render(
+            render_pkg = self.render(
                 viewpoint, self.gaussians, self.pipeline_params, self.background
             )
             image, depth, opacity = (
@@ -305,7 +308,7 @@ class FrontEnd(mp.Process):
         self.requested_init = True
 
     def sync_backend(self, data):
-        self.gaussians = GaussianModel.from_dict(data[1])
+        self.gaussians = self.gaussian_model_cls.from_dict(data[1])
         occ_aware_visibility = data[2]
         keyframes = data[3]
         # Move occ_aware_visibility tensors back to CUDA (were sent as CPU from backend)

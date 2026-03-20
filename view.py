@@ -14,6 +14,8 @@ from typing import Optional
 
 import numpy as np
 
+from utils.renderer_utils import get_renderer_components
+
 
 def _resolve_run_dir(result_dir: str) -> Path:
     run_dir = Path(result_dir)
@@ -210,13 +212,24 @@ def _render_item_image(render_pkg, mode: str, trajectory_img: np.ndarray):
         cv2 = None
 
     if mode == "Depth":
-        depth = render_pkg["depth"][0].detach().float().cpu().numpy()
+        depth_key = "depth" if "depth" in render_pkg else "mean_depth"
+        depth = render_pkg[depth_key][0].detach().float().cpu().numpy()
         max_depth = max(float(depth.max()), 1e-6)
         depth_u8 = np.clip(depth / max_depth * 255.0, 0, 255).astype(np.uint8)
         if cv2 is None:
             return np.repeat(depth_u8[:, :, None], 3, axis=2)
         depth_img = cv2.applyColorMap(depth_u8, cv2.COLORMAP_TURBO)
         return cv2.cvtColor(depth_img, cv2.COLOR_BGR2RGB)
+
+    if mode == "Normal":
+        normal = render_pkg.get("rend_normal")
+        if normal is None:
+            normal = render_pkg.get("surf_normal")
+        if normal is None:
+            return np.zeros_like(trajectory_img)
+        normal_img = normal.detach().float().permute(1, 2, 0).cpu().numpy()
+        normal_img = np.clip((normal_img + 1.0) * 0.5, 0.0, 1.0)
+        return (normal_img * 255.0).astype(np.uint8)
 
     if mode == "Opacity":
         opacity = render_pkg["opacity"][0].detach().float().cpu().numpy()
@@ -260,13 +273,11 @@ def _launch_viewer(viewer_cmd: str):
     return subprocess.Popen(shlex.split(viewer_cmd))
 
 
-def _init_renderer(ply_path: Path, white_background: bool):
+def _init_renderer(ply_path: Path, white_background: bool, renderer_mode: str):
     import torch
 
-    from gaussian_splatting.gaussian_renderer import render
-    from gaussian_splatting.scene.gaussian_model import GaussianModel
-
-    gaussians = GaussianModel(sh_degree=3)
+    render, gaussian_model_cls = get_renderer_components(renderer_mode)
+    gaussians = gaussian_model_cls(sh_degree=3)
     gaussians.load_ply(str(ply_path))
     pipe = SimpleNamespace(convert_SHs_python=False, compute_cov3D_python=False)
     bg_color = [1.0, 1.0, 1.0] if white_background else [0.0, 0.0, 0.0]
@@ -434,8 +445,15 @@ def main():
     parser.add_argument(
         "--render-items",
         type=str,
-        default="RGB,Depth,Opacity,Trajectory",
+        default="RGB,Depth,Normal,Opacity,Trajectory",
         help="Comma-separated render item list exposed to Monitor viewer",
+    )
+    parser.add_argument(
+        "--renderer",
+        type=str,
+        choices=["2dgs", "3dgs"],
+        default="2dgs",
+        help="Renderer mode used for visualization",
     )
     parser.add_argument(
         "--viewer-cmd",
@@ -476,7 +494,7 @@ def main():
 
     render_items = [x.strip() for x in args.render_items.split(",") if x.strip()]
     if not render_items:
-        render_items = ["RGB", "Depth", "Opacity", "Trajectory"]
+        render_items = ["RGB", "Depth", "Normal", "Opacity", "Trajectory"]
 
     render_func = None
     gaussians = None
@@ -528,7 +546,7 @@ def main():
                         if render_func is None and not renderer_error:
                             try:
                                 render_func, gaussians, pipe, background = _init_renderer(
-                                    ply_path, white_background
+                                    ply_path, white_background, args.renderer
                                 )
                             except Exception as e:
                                 renderer_error = str(e)

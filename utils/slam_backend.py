@@ -6,13 +6,12 @@ import torch
 import torch.multiprocessing as mp
 from tqdm import tqdm
 
-from gaussian_splatting.gaussian_renderer import render
-from gaussian_splatting.scene.gaussian_model import GaussianModel
 from gaussian_splatting.utils.loss_utils import l1_loss, ssim
 from utils.camera_utils import Camera
 from utils.logging_utils import Log
 from utils.multiprocessing_utils import clone_obj
 from utils.pose_utils import update_pose
+from utils.renderer_utils import get_renderer_components, supports_2d_regularization
 from utils.slam_utils import get_loss_mapping, get_loss_normal_consistency, get_loss_dist
 
 
@@ -41,6 +40,9 @@ class BackEnd(mp.Process):
         self.initialized = not self.monocular
         self.keyframe_optimizers = None
         self.init_sh_degree = 0
+        self.renderer_mode = self.config["Training"].get("renderer", "2dgs")
+        self.render, self.gaussian_model_cls = get_renderer_components(self.renderer_mode)
+        self.enable_2d_regularization = supports_2d_regularization(self.renderer_mode)
 
     def set_hyperparams(self):
         self.save_results = self.config["Results"]["save_results"]
@@ -94,7 +96,7 @@ class BackEnd(mp.Process):
     def initialize_map(self, cur_frame_idx, viewpoint):
         for mapping_iteration in range(self.init_itr_num):
             self.iteration_count += 1
-            render_pkg = render(
+            render_pkg = self.render(
                 viewpoint, self.gaussians, self.pipeline_params, self.background
             )
             (
@@ -176,7 +178,7 @@ class BackEnd(mp.Process):
             for cam_idx in range(len(current_window)):
                 viewpoint = viewpoint_stack[cam_idx]
                 keyframes_opt.append(viewpoint)
-                render_pkg = render(
+                render_pkg = self.render(
                     viewpoint, self.gaussians, self.pipeline_params, self.background
                 )
                 (
@@ -207,7 +209,7 @@ class BackEnd(mp.Process):
 
             for cam_idx in torch.randperm(len(random_viewpoint_stack))[:2]:
                 viewpoint = random_viewpoint_stack[cam_idx]
-                render_pkg = render(
+                render_pkg = self.render(
                     viewpoint, self.gaussians, self.pipeline_params, self.background
                 )
                 (
@@ -234,16 +236,22 @@ class BackEnd(mp.Process):
                 visibility_filter_acm.append(visibility_filter)
                 radii_acm.append(radii)
 
-            lambda_normal = self.config["Training"].get("lambda_normal", 0.05)
-            lambda_dist = self.config["Training"].get("lambda_dist", 0.0)
-            if self.iteration_count > 3000 and lambda_dist > 0:
-                loss_mapping += lambda_dist * get_loss_dist(render_pkg["rend_dist"])
-            if self.iteration_count > 7000 and lambda_normal > 0:
-                loss_mapping += lambda_normal * get_loss_normal_consistency(
-                    render_pkg["rend_normal"],
-                    render_pkg["surf_normal"],
-                    render_pkg["rend_alpha"],
-                )
+            if self.enable_2d_regularization:
+                lambda_normal = self.config["Training"].get("lambda_normal", 0.05)
+                lambda_dist = self.config["Training"].get("lambda_dist", 0.0)
+                if lambda_dist > 0 and "rend_dist" in render_pkg:
+                    loss_mapping += lambda_dist * get_loss_dist(render_pkg["rend_dist"])
+                if (
+                    lambda_normal > 0
+                    and "rend_normal" in render_pkg
+                    and "surf_normal" in render_pkg
+                    and "rend_alpha" in render_pkg
+                ):
+                    loss_mapping += lambda_normal * get_loss_normal_consistency(
+                        render_pkg["rend_normal"],
+                        render_pkg["surf_normal"],
+                        render_pkg["rend_alpha"],
+                    )
             loss_mapping.backward()
             gaussian_split = False
             ## Deinsifying / Pruning Gaussians
@@ -342,7 +350,7 @@ class BackEnd(mp.Process):
                 random.randint(0, len(viewpoint_idx_stack) - 1)
             )
             viewpoint_cam = self.viewpoints[viewpoint_cam_idx]
-            render_pkg = render(
+            render_pkg = self.render(
                 viewpoint_cam, self.gaussians, self.pipeline_params, self.background
             )
             image, visibility_filter, radii = (
@@ -419,6 +427,8 @@ class BackEnd(mp.Process):
                     self.map(self.current_window, prune=True, iters=10)
                     self.push_to_frontend()
             else:
+                if data[0] == "map":
+                    continue
                 if data[0] == "stop":
                     break
                 elif data[0] == "pause":
@@ -435,7 +445,7 @@ class BackEnd(mp.Process):
                     Log("Resetting the system")
 
                     if self.gaussians is None:
-                        self.gaussians = GaussianModel(
+                        self.gaussians = self.gaussian_model_cls(
                             self.init_sh_degree,
                             config=self.config,
                         )
