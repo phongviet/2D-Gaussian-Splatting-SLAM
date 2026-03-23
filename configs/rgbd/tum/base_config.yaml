@@ -45,6 +45,8 @@ Training:
   prune_mode: 'slam'
   single_thread: False
   spherical_harmonics: False
+  lambda_normal: 0.05
+  lambda_distortion: 0.001
   lr:
     cam_rot_delta: 0.003
     cam_trans_delta: 0.001

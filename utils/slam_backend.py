@@ -136,7 +136,7 @@ class BackEnd(mp.Process):
                 self.gaussians.optimizer.step()
                 self.gaussians.optimizer.zero_grad(set_to_none=True)
 
-        self.occ_aware_visibility[cur_frame_idx] = (radii > 0).long()
+        self.occ_aware_visibility[cur_frame_idx] = (render_pkg["n_touched"] > 0).long()
         Log("Initialized map")
         return render_pkg
 
@@ -226,6 +226,7 @@ class BackEnd(mp.Process):
                 viewspace_point_tensor_acm.append(viewspace_point_tensor)
                 visibility_filter_acm.append(visibility_filter)
                 radii_acm.append(radii)
+                n_touched_acm.append(n_touched)
 
             scaling = self.gaussians.get_scaling
             isotropic_loss = torch.abs(scaling - scaling.mean(dim=1).view(-1, 1))
@@ -238,7 +239,7 @@ class BackEnd(mp.Process):
                 for idx in range((len(current_window))):
                     kf_idx = current_window[idx]
                     radii_k = radii_acm[idx]
-                    self.occ_aware_visibility[kf_idx] = (radii_k > 0).long()
+                    self.occ_aware_visibility[kf_idx] = (n_touched_acm[idx] > 0).long()
 
                 # # compute the visibility of the gaussians
                 # # Only prune on the last iteration and when we have full window

@@ -615,44 +615,65 @@ __device__ void compute_transmat_aabb(
 	// So: dL/d(p_c) = R_cw * dL/d(p_w)
 	// -----------------------------------------------------------------------
 	if (dL_dtau != nullptr) {
-		// Extract R_cw (view matrix upper 3x3, row-major stored in column-major order)
-		// viewmatrix is stored column-major: viewmatrix[col*4 + row]
+		// Extract R_cw (view matrix upper 3x3)
 		mat33 R_cw(
 			make_float3(viewmatrix[0], viewmatrix[1], viewmatrix[2]),   // col0
 			make_float3(viewmatrix[4], viewmatrix[5], viewmatrix[6]),   // col1
 			make_float3(viewmatrix[8], viewmatrix[9], viewmatrix[10])   // col2
 		);
 
-		// dL/d(p_w) = gradient from T matrix column 2 (the position column of M)
-		// This is dL_dM[2] = dL_dmeans[idx] (just set above)
-		float3 dL_dpw = make_float3(
-			dL_dM[2].x, dL_dM[2].y, dL_dM[2].z
-		);
-
-		// dL/d(p_c) = R_cw * dL/d(p_w)
-		float3 dL_dpc = R_cw * dL_dpw;
-
-		// Also add contribution from dL_dmean2D gradient through depth-normalized projection
-		// The 2D mean is derived from T[2] (the homogeneous row): mean2D = T[2][0:2] / T[2][2]
-		// This is already captured in dL_dM[2] via the mean2D backward, so we don't double-count.
-
-		// p_c in camera space (for the skew-symmetric term)
+		// Current camera-space position
 		float3 p_c = transformPoint4x3(p_orig, viewmatrix);
 
-		// dL/d_rho = dL/d(p_c) (translation perturbation: dp_c/d_rho = I)
+		// 1. Position Contribution (Translation + Rotation)
+		float3 dL_dpw = make_float3(dL_dM[2].x, dL_dM[2].y, dL_dM[2].z);
+		float3 dL_dpc = R_cw * dL_dpw;
+
+		// Translation part (rho) - only affected by positional center
 		atomicAdd(&dL_dtau[0], dL_dpc.x);
 		atomicAdd(&dL_dtau[1], dL_dpc.y);
 		atomicAdd(&dL_dtau[2], dL_dpc.z);
 
-		// dL/d_theta: dp_c/d_theta = -[p_c]_x (skew-symmetric of p_c, negated)
-		// [p_c]_x = [[0, -pz, py], [pz, 0, -px], [-py, px, 0]]
-		// dp_c/d_theta_x = (0, pz, -py)
-		// dp_c/d_theta_y = (-pz, 0, px)
-		// dp_c/d_theta_z = (py, -px, 0)
-		// dL/d_theta_i = dot(dL/d(p_c), dp_c/d_theta_i)
-		atomicAdd(&dL_dtau[3],  dL_dpc.y * p_c.z - dL_dpc.z * p_c.y);  // theta_x
-		atomicAdd(&dL_dtau[4], -dL_dpc.x * p_c.z + dL_dpc.z * p_c.x);  // theta_y
-		atomicAdd(&dL_dtau[5],  dL_dpc.x * p_c.y - dL_dpc.y * p_c.x);  // theta_z
+		// Rotation part (theta) - affected by center AND orientation
+		// Negated to match camera-frame right-hand rule and numerical gradients
+		float3 dL_dtheta = make_float3(
+			-(dL_dpc.y * p_c.z - dL_dpc.z * p_c.y),
+			-(-dL_dpc.x * p_c.z + dL_dpc.z * p_c.x),
+			-(dL_dpc.x * p_c.y - dL_dpc.y * p_c.x)
+		);
+
+		// 2. Basis Vectors Contribution (Rotation only)
+		// Propagate gradients from Homography columns 0 and 1 (L0, L1)
+		glm::mat3 R = quat_to_rotmat(rot);
+		float3 basis_w[2] = {
+			make_float3(R[0][0] * scale.x, R[0][1] * scale.x, R[0][2] * scale.x),
+			make_float3(R[1][0] * scale.y, R[1][1] * scale.y, R[1][2] * scale.y)
+		};
+		
+		for (int i = 0; i < 2; i++) {
+			float3 dL_dwi = make_float3(dL_dM[i].x, dL_dM[i].y, dL_dM[i].z);
+			float3 dL_dci = R_cw * dL_dwi;
+			float3 wi_c = transformVec4x3(basis_w[i], viewmatrix);
+			
+			dL_dtheta.x += dL_dci.y * wi_c.z - dL_dci.z * wi_c.y;
+			dL_dtheta.y += -dL_dci.x * wi_c.z + dL_dci.z * wi_c.x;
+			dL_dtheta.z += dL_dci.x * wi_c.y - dL_dci.y * wi_c.x;
+		}
+
+		// 3. Normal Vector Contribution (Rotation only)
+		// Propagate gradients from Normal Consistency loss
+		float3 normal_w = make_float3(R[2][0], R[2][1], R[2][2]);
+		float3 dL_dnc = R_cw * dL_dtn; // dL_dtn is already world-space gradient of normal
+		float3 n_c = transformVec4x3(normal_w, viewmatrix);
+
+		dL_dtheta.x += dL_dnc.y * n_c.z - dL_dnc.z * n_c.y;
+		dL_dtheta.y += -dL_dnc.x * n_c.z + dL_dnc.z * n_c.x;
+		dL_dtheta.z += dL_dnc.x * n_c.y - dL_dnc.y * n_c.x;
+
+		// Accumulate rotation gradients
+		atomicAdd(&dL_dtau[3], dL_dtheta.x);
+		atomicAdd(&dL_dtau[4], dL_dtheta.y);
+		atomicAdd(&dL_dtau[5], dL_dtheta.z);
 	}
 }
 

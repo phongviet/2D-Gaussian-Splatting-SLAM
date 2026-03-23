@@ -104,7 +104,10 @@ def get_loss_tracking_rgbd(
 
     l1_rgb = get_loss_tracking_rgb(config, image, depth, opacity, viewpoint, render_pkg=render_pkg)
     depth_mask = depth_pixel_mask * opacity_mask
-    l1_depth = torch.abs(depth * depth_mask - gt_depth * depth_mask)
+    
+    # Use Median (Unbiased) depth for tracking if available
+    depth_to_use = render_pkg["rend_median_depth"] if render_pkg is not None and "rend_median_depth" in render_pkg else depth
+    l1_depth = torch.abs(depth_to_use * depth_mask - gt_depth * depth_mask)
     return alpha * l1_rgb + (1 - alpha) * l1_depth.mean()
 
 
@@ -157,15 +160,19 @@ def get_loss_mapping_rgbd(config, image, depth, viewpoint, initialization=False,
     depth_pixel_mask = (gt_depth > 0.01).view(*depth.shape)
 
     l1_rgb = torch.abs(image * rgb_pixel_mask - gt_image * rgb_pixel_mask)
-    l1_depth = torch.abs(depth * depth_pixel_mask - gt_depth * depth_pixel_mask)
+    
+    # Use Median (Unbiased) depth for mapping
+    depth_to_use = render_pkg["rend_median_depth"] if render_pkg is not None and "rend_median_depth" in render_pkg else depth
+    l1_depth = torch.abs(depth_to_use * depth_pixel_mask - gt_depth * depth_pixel_mask)
 
     loss = alpha * l1_rgb.mean() + (1 - alpha) * l1_depth.mean()
 
     if render_pkg is not None:
         if "lambda_normal" in config["Training"] and config["Training"]["lambda_normal"] > 0:
             rend_normal = render_pkg["rend_normal"]
-            surf_depth = render_pkg["depth"]
-            surf_normal = depth_to_normal(viewpoint, surf_depth)
+            
+            # Use Ground Truth depth for normal reference to provide a stable geometric anchor
+            surf_normal = depth_to_normal(viewpoint, gt_depth)
             surf_normal = surf_normal.permute(2, 0, 1)
             loss_normal = (1 - torch.sum(rend_normal * surf_normal, dim=0)).mean()
             loss += config["Training"]["lambda_normal"] * loss_normal
