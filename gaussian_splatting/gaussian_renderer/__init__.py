@@ -12,7 +12,7 @@
 import math
 
 import torch
-from diff_gaussian_rasterization import (
+from diff_surfel_rasterization import (
     GaussianRasterizationSettings,
     GaussianRasterizer,
 )
@@ -114,7 +114,7 @@ def render(
 
     # Rasterize visible Gaussians to image, obtain their radii (on screen).
     if mask is not None:
-        rendered_image, radii, depth, opacity = rasterizer(
+        rendered_image, radii, depth, opacity, n_touched, normal, median_depth, distortion = rasterizer(
             means3D=means3D[mask],
             means2D=means2D[mask],
             shs=shs[mask],
@@ -127,7 +127,7 @@ def render(
             rho=viewpoint_camera.cam_trans_delta,
         )
     else:
-        rendered_image, radii, depth, opacity, n_touched = rasterizer(
+        rendered_image, radii, depth, opacity, n_touched, normal, median_depth, distortion = rasterizer(
             means3D=means3D,
             means2D=means2D,
             shs=shs,
@@ -150,4 +150,7 @@ def render(
         "depth": depth,
         "opacity": opacity,
         "n_touched": n_touched,
+        "rend_normal": normal,
+        "rend_dist": distortion,
+        "rend_median_depth": median_depth,
     }

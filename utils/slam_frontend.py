@@ -172,7 +172,7 @@ class FrontEnd(mp.Process):
             )
             pose_optimizer.zero_grad()
             loss_tracking = get_loss_tracking(
-                self.config, image, depth, opacity, viewpoint
+                self.config, image, depth, opacity, viewpoint, render_pkg=render_pkg
             )
             loss_tracking.backward()
 
@@ -240,6 +240,8 @@ class FrontEnd(mp.Process):
             intersection = torch.logical_and(
                 cur_frame_visibility_filter, occ_aware_visibility[kf_idx]
             ).count_nonzero()
+            
+
             denom = min(
                 cur_frame_visibility_filter.count_nonzero(),
                 occ_aware_visibility[kf_idx].count_nonzero(),
@@ -251,7 +253,7 @@ class FrontEnd(mp.Process):
                 else 0.4
             )
             if not self.initialized:
-                cut_off = 0.4
+                cut_off = 0.1
             if point_ratio_2 <= cut_off:
                 to_remove.append(kf_idx)
 
@@ -416,7 +418,7 @@ class FrontEnd(mp.Process):
 
                 last_keyframe_idx = self.current_window[0]
                 check_time = (cur_frame_idx - last_keyframe_idx) >= self.kf_interval
-                curr_visibility = (render_pkg["n_touched"] > 0).long()
+                curr_visibility = (render_pkg["radii"] > 0).long()
                 create_kf = self.is_keyframe(
                     cur_frame_idx,
                     last_keyframe_idx,
@@ -446,6 +448,7 @@ class FrontEnd(mp.Process):
                     )
                     if self.monocular and not self.initialized and removed is not None:
                         self.reset = True
+
                         Log(
                             "Keyframes lacks sufficient overlap to initialize the map, resetting."
                         )
