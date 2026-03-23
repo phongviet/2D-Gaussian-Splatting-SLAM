@@ -17,5 +17,12 @@ Dataset:
     depth_scale: 5000.0
     distorted: True
 
+Training:
+  kf_overlap: 0.5
+  kf_cutoff: 0.1
+  lambda_dist: 1000.0
+  lr:
+    cam_rot_delta: 0.0003
+    cam_trans_delta: 0.0001
 
 

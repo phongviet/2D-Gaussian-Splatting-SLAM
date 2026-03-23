@@ -10,7 +10,7 @@ from gui import gui_utils
 from utils.camera_utils import Camera
 from utils.eval_utils import eval_ate, save_gaussians
 from utils.logging_utils import Log
-from utils.multiprocessing_utils import clone_obj
+from utils.multiprocessing_utils import FakeQueue, clone_obj
 from utils.pose_utils import update_pose
 from utils.renderer_utils import get_renderer_components
 from utils.slam_utils import get_loss_tracking, get_median_depth
@@ -229,7 +229,8 @@ class FrontEnd(mp.Process):
         intersection = torch.logical_and(
             cur_frame_visibility_filter, occ_aware_visibility[last_keyframe_idx]
         ).count_nonzero()
-        point_ratio_2 = intersection / union
+        union = union.clamp_min(1)
+        point_ratio_2 = intersection.float() / union.float()
         return (point_ratio_2 < kf_overlap and dist_check2) or dist_check
 
     def add_to_window(
@@ -251,14 +252,15 @@ class FrontEnd(mp.Process):
                 cur_frame_visibility_filter.count_nonzero(),
                 occ_aware_visibility[kf_idx].count_nonzero(),
             )
-            point_ratio_2 = intersection / denom
+            denom = denom.clamp_min(1)
+            point_ratio_2 = intersection.float() / denom.float()
             cut_off = (
                 self.config["Training"]["kf_cutoff"]
                 if "kf_cutoff" in self.config["Training"]
                 else 0.4
             )
             if not self.initialized:
-                cut_off = 0.4
+                continue
             if point_ratio_2 <= cut_off:
                 to_remove.append(kf_idx)
 
@@ -437,14 +439,15 @@ class FrontEnd(mp.Process):
             current_window_dict[self.current_window[0]] = self.current_window[1:]
             keyframes = [self.cameras[kf_idx] for kf_idx in self.current_window]
 
-            self.q_main2vis.put(
-                gui_utils.GaussianPacket(
-                    gaussians=clone_obj(self.gaussians),
-                    current_frame=viewpoint,
-                    keyframes=keyframes,
-                    kf_window=current_window_dict,
+            if not isinstance(self.q_main2vis, FakeQueue):
+                self.q_main2vis.put(
+                    gui_utils.GaussianPacket(
+                        gaussians=clone_obj(self.gaussians),
+                        current_frame=viewpoint,
+                        keyframes=keyframes,
+                        kf_window=current_window_dict,
+                    )
                 )
-            )
 
             if self.requested_keyframe > 0:
                 self.cleanup(cur_frame_idx)
@@ -453,7 +456,10 @@ class FrontEnd(mp.Process):
 
             last_keyframe_idx = self.current_window[0]
             check_time = (cur_frame_idx - last_keyframe_idx) >= self.kf_interval
-            curr_visibility = (render_pkg["n_touched"] > 0).long()
+            if self.initialized:
+                curr_visibility = (render_pkg["n_touched"] > 0).long()
+            else:
+                curr_visibility = render_pkg["visibility_filter"].long()
             create_kf = self.is_keyframe(
                 cur_frame_idx,
                 last_keyframe_idx,
@@ -467,7 +473,8 @@ class FrontEnd(mp.Process):
                 intersection = torch.logical_and(
                     curr_visibility, self.occ_aware_visibility[last_keyframe_idx]
                 ).count_nonzero()
-                point_ratio = intersection / union
+                union = union.clamp_min(1)
+                point_ratio = intersection.float() / union.float()
                 create_kf = (
                     check_time
                     and point_ratio < self.config["Training"]["kf_overlap"]

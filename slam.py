@@ -15,7 +15,7 @@ from gaussian_splatting.utils.system_utils import mkdir_p
 from gui import gui_utils, slam_gui
 from utils.config_utils import load_config
 from utils.dataset import load_dataset
-from utils.eval_utils import eval_ate, eval_rendering, save_gaussians
+from utils.eval_utils import eval_ate, eval_rendering, save_gaussians, save_monitor_scene
 from utils.logging_utils import Log
 from utils.multiprocessing_utils import FakeQueue
 from utils.renderer_utils import resolve_renderer_mode
@@ -168,8 +168,8 @@ class SLAM:
                 except queue.Empty:
                     continue
                 if data[0] == "sync_backend":
-                    gaussians = data[1]
-                    self.gaussians = gaussians
+                    self.frontend.sync_backend(data)
+                    self.gaussians = self.frontend.gaussians
                     break
 
             # rendering_result = eval_rendering(
@@ -191,7 +191,8 @@ class SLAM:
             #     FPS,
             # )
             # wandb.log({"Metrics": metrics_table})
-            #save_gaussians(self.gaussians, self.save_dir, "final_after_opt", final=True)
+            save_gaussians(self.gaussians, self.save_dir, "final_after_opt", final=True)
+            save_monitor_scene(self.frontend.cameras, self.save_dir)
 
         backend_queue.put(["stop"])
         backend_process.join()

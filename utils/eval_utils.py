@@ -127,39 +127,42 @@ def eval_rendering(
     render_func, _ = get_renderer_components(renderer_mode)
     interval = 5
     img_pred, img_gt, saved_frame_idx = [], [], []
-    end_idx = len(frames) - 1 if iteration == "final" or "before_opt" else iteration
+    end_idx = len(frames) - 1 if isinstance(iteration, str) else iteration
     psnr_array, ssim_array, lpips_array = [], [], []
     cal_lpips = LearnedPerceptualImagePatchSimilarity(
         net_type="alex", normalize=True
     ).to("cuda")
-    for idx in range(0, end_idx, interval):
-        if idx in kf_indices:
-            continue
-        saved_frame_idx.append(idx)
-        frame = frames[idx]
-        gt_image, _, _ = dataset[idx]
+    with torch.no_grad():
+        if background.device.type != "cuda":
+            background = background.to("cuda")
+        for idx in range(0, end_idx, interval):
+            if idx in kf_indices:
+                continue
+            saved_frame_idx.append(idx)
+            frame = frames[idx]
+            gt_image, _, _ = dataset[idx]
 
-        rendering = render_func(frame, gaussians, pipe, background)["render"]
-        image = torch.clamp(rendering, 0.0, 1.0)
+            rendering = render_func(frame, gaussians, pipe, background)["render"]
+            image = torch.clamp(rendering, 0.0, 1.0)
 
-        gt = (gt_image.cpu().numpy().transpose((1, 2, 0)) * 255).astype(np.uint8)
-        pred = (image.detach().cpu().numpy().transpose((1, 2, 0)) * 255).astype(
-            np.uint8
-        )
-        gt = cv2.cvtColor(gt, cv2.COLOR_BGR2RGB)
-        pred = cv2.cvtColor(pred, cv2.COLOR_BGR2RGB)
-        img_pred.append(pred)
-        img_gt.append(gt)
+            gt = (gt_image.cpu().numpy().transpose((1, 2, 0)) * 255).astype(np.uint8)
+            pred = (image.detach().cpu().numpy().transpose((1, 2, 0)) * 255).astype(
+                np.uint8
+            )
+            gt = cv2.cvtColor(gt, cv2.COLOR_BGR2RGB)
+            pred = cv2.cvtColor(pred, cv2.COLOR_BGR2RGB)
+            img_pred.append(pred)
+            img_gt.append(gt)
 
-        mask = gt_image > 0
+            mask = gt_image > 0
 
-        psnr_score = psnr((image[mask]).unsqueeze(0), (gt_image[mask]).unsqueeze(0))
-        ssim_score = ssim((image).unsqueeze(0), (gt_image).unsqueeze(0))
-        lpips_score = cal_lpips((image).unsqueeze(0), (gt_image).unsqueeze(0))
+            psnr_score = psnr((image[mask]).unsqueeze(0), (gt_image[mask]).unsqueeze(0))
+            ssim_score = ssim((image).unsqueeze(0), (gt_image).unsqueeze(0))
+            lpips_score = cal_lpips((image).unsqueeze(0), (gt_image).unsqueeze(0))
 
-        psnr_array.append(psnr_score.item())
-        ssim_array.append(ssim_score.item())
-        lpips_array.append(lpips_score.item())
+            psnr_array.append(psnr_score.item())
+            ssim_array.append(ssim_score.item())
+            lpips_array.append(lpips_score.item())
 
     output = dict()
     output["mean_psnr"] = float(np.mean(psnr_array))
@@ -192,3 +195,43 @@ def save_gaussians(gaussians, name, iteration, final=False):
             name, "point_cloud/iteration_{}".format(str(iteration))
         )
     gaussians.save_ply(os.path.join(point_cloud_path, "point_cloud.ply"))
+
+
+def save_monitor_scene(cameras, save_dir):
+    import shutil
+
+    monitor_scene_dir = os.path.join(save_dir, "monitor_scene")
+    mkdir_p(monitor_scene_dir)
+
+    cameras_json = []
+    cam_list = cameras.values() if isinstance(cameras, dict) else cameras
+
+    for v in cam_list:
+        w2c = torch.eye(4)
+        w2c[:3, :3] = v.R.transpose(0, 1)
+        w2c[:3, 3] = v.T
+        c2w = torch.inverse(w2c)
+        pos = c2w[:3, 3].cpu().numpy().tolist()
+        rot = c2w[:3, :3].cpu().numpy().tolist()
+
+        cameras_json.append(
+            {
+                "id": int(v.uid),
+                "img_name": f"frame_{int(v.uid):06d}.png",
+                "width": int(v.image_width),
+                "height": int(v.image_height),
+                "fx": float(v.fx),
+                "fy": float(v.fy),
+                "position": pos,
+                "rotation": rot,
+            }
+        )
+
+    with open(
+        os.path.join(monitor_scene_dir, "cameras.json"), "w", encoding="utf-8"
+    ) as f:
+        json.dump(cameras_json, f, indent=2)
+
+    final_ply = os.path.join(save_dir, "point_cloud", "final", "point_cloud.ply")
+    if os.path.exists(final_ply):
+        shutil.copy2(final_ply, os.path.join(monitor_scene_dir, "input.ply"))

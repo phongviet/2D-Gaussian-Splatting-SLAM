@@ -145,7 +145,8 @@ class BackEnd(mp.Process):
                 self.gaussians.optimizer.step()
                 self.gaussians.optimizer.zero_grad(set_to_none=True)
 
-        self.occ_aware_visibility[cur_frame_idx] = (n_touched > 0).long()
+        visibility_source = visibility_filter if not self.initialized else (n_touched > 0)
+        self.occ_aware_visibility[cur_frame_idx] = visibility_source.long()
         Log("Initialized map")
         return render_pkg
 
@@ -260,7 +261,11 @@ class BackEnd(mp.Process):
                 for idx in range((len(current_window))):
                     kf_idx = current_window[idx]
                     n_touched = n_touched_acm[idx]
-                    self.occ_aware_visibility[kf_idx] = (n_touched > 0).long()
+                    if self.initialized:
+                        visibility_source = n_touched > 0
+                    else:
+                        visibility_source = visibility_filter_acm[idx]
+                    self.occ_aware_visibility[kf_idx] = visibility_source.long()
 
                 # # compute the visibility of the gaussians
                 # # Only prune on the last iteration and when we have full window
