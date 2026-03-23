@@ -142,7 +142,10 @@ def build_scaling_rotation(s, r):
 
     L[:, 0, 0] = s[:, 0]
     L[:, 1, 1] = s[:, 1]
-    L[:, 2, 2] = s[:, 2]
+    if s.shape[1] > 2:
+        L[:, 2, 2] = s[:, 2]
+    else:
+        L[:, 2, 2] = 0.0
 
     L = R @ L
     return L
