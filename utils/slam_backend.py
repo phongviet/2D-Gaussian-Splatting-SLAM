@@ -108,7 +108,7 @@ class BackEnd(mp.Process):
                 render_pkg["n_touched"],
             )
             loss_init = get_loss_mapping(
-                self.config, image, depth, viewpoint, opacity, initialization=True
+                self.config, image, depth, viewpoint, opacity, initialization=True, render_pkg=render_pkg
             )
             loss_init.backward()
 
@@ -136,7 +136,7 @@ class BackEnd(mp.Process):
                 self.gaussians.optimizer.step()
                 self.gaussians.optimizer.zero_grad(set_to_none=True)
 
-        self.occ_aware_visibility[cur_frame_idx] = (n_touched > 0).long()
+        self.occ_aware_visibility[cur_frame_idx] = (radii > 0).long()
         Log("Initialized map")
         return render_pkg
 
@@ -191,7 +191,7 @@ class BackEnd(mp.Process):
                 )
 
                 loss_mapping += get_loss_mapping(
-                    self.config, image, depth, viewpoint, opacity
+                    self.config, image, depth, viewpoint, opacity, render_pkg=render_pkg
                 )
                 viewspace_point_tensor_acm.append(viewspace_point_tensor)
                 visibility_filter_acm.append(visibility_filter)
@@ -221,7 +221,7 @@ class BackEnd(mp.Process):
                     render_pkg["n_touched"],
                 )
                 loss_mapping += get_loss_mapping(
-                    self.config, image, depth, viewpoint, opacity
+                    self.config, image, depth, viewpoint, opacity, render_pkg=render_pkg
                 )
                 viewspace_point_tensor_acm.append(viewspace_point_tensor)
                 visibility_filter_acm.append(visibility_filter)
@@ -237,8 +237,8 @@ class BackEnd(mp.Process):
                 self.occ_aware_visibility = {}
                 for idx in range((len(current_window))):
                     kf_idx = current_window[idx]
-                    n_touched = n_touched_acm[idx]
-                    self.occ_aware_visibility[kf_idx] = (n_touched > 0).long()
+                    radii_k = radii_acm[idx]
+                    self.occ_aware_visibility[kf_idx] = (radii_k > 0).long()
 
                 # # compute the visibility of the gaussians
                 # # Only prune on the last iteration and when we have full window

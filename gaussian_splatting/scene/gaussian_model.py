@@ -189,7 +189,7 @@ class GaussianModel:
         )
         scales = torch.log(torch.sqrt(dist2))[..., None]
         if not self.isotropic:
-            scales = scales.repeat(1, 3)
+            scales = scales.repeat(1, 2)
 
         rots = torch.zeros((fused_point_cloud.shape[0], 4), device="cuda")
         rots[:, 0] = 1
@@ -603,8 +603,9 @@ class GaussianModel:
         )
 
         stds = self.get_scaling[selected_pts_mask].repeat(N, 1)
+        padded_stds = torch.cat([stds, torch.zeros_like(stds[:, :1])], dim=-1)
         means = torch.zeros((stds.size(0), 3), device="cuda")
-        samples = torch.normal(mean=means, std=stds)
+        samples = torch.normal(mean=means, std=padded_stds)
         rots = build_rotation(self._rotation[selected_pts_mask]).repeat(N, 1, 1)
         new_xyz = torch.bmm(rots, samples.unsqueeze(-1)).squeeze(-1) + self.get_xyz[
             selected_pts_mask
