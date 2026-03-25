@@ -401,12 +401,11 @@ renderCUDA(
 
 #if RENDER_AXUTILITY
 			// Render depth distortion map
-			// Efficient implementation of distortion loss, see 2DGS' paper appendix.
-			float A = 1-T;
+			// Efficient implementation of absolute distortion loss: 2 * sum_i w_i (m_i * A_i - M1_i)
+			float A = 1 - T;
 			float m = far_n / (far_n - near_n) * (1 - near_n / depth);
-			distortion += (m * m * A + M2 - 2 * m * M1) * w;
+			distortion += (m * A - M1) * w;
 			M1 += m * w;
-			M2 += m * m * w;
 
 			if (T > 0.5) {
 				median_depth = depth;
@@ -440,12 +439,12 @@ renderCUDA(
 #if RENDER_AXUTILITY
 		n_contrib[pix_id + H * W] = median_contributor;
 		final_T[pix_id + H * W] = M1;
-		final_T[pix_id + 2 * H * W] = M2;
+		// final_T[pix_id + 2 * H * W] = M2; // No longer needed for absolute distortion
 		out_others[pix_id + DEPTH_OFFSET * H * W] = D;
 		out_others[pix_id + ALPHA_OFFSET * H * W] = 1 - T;
 		for (int ch=0; ch<3; ch++) out_others[pix_id + (NORMAL_OFFSET+ch) * H * W] = N[ch];
 		out_others[pix_id + MIDDEPTH_OFFSET * H * W] = median_depth;
-		out_others[pix_id + DISTORTION_OFFSET * H * W] = distortion;
+		out_others[pix_id + DISTORTION_OFFSET * H * W] = 2.0f * distortion;
 		// out_others[pix_id + MEDIAN_WEIGHT_OFFSET * H * W] = median_weight;
 #endif
 	}

@@ -34,7 +34,7 @@ Training:
   pose_window: 3
   edge_threshold: 1.1
   rgb_boundary_threshold: 0.01
-  lambda_normal: 0.0
+  lambda_normal: 0.05
   lambda_distortion: 0.001
 
   kf_translation: 0.08
