@@ -75,11 +75,12 @@ def get_loss_tracking_rgb(config, image, depth, opacity, viewpoint, render_pkg=N
             rend_normal = render_pkg["rend_normal"]
             surf_depth = render_pkg["depth"]
             surf_normal = depth_to_normal(viewpoint, surf_depth)
-            # transform normal from view space to world space to match rend_normal
-            # actually rend_normal is already in world space in 2DGS render
-            # wait, let me check the render function again
-            # render_normal = (render_normal.permute(1,2,0) @ (viewpoint_camera.world_view_transform[:3,:3].T)).permute(2,0,1)
-            # Yes, it is in world space. depth_to_normal returns world space normals too.
+            
+            # Transform View Space normal to World Space
+            # rend_normal is (3, H, W) in View Space
+            R_wc = viewpoint.world_view_transform[:3, :3].T
+            rend_normal = (rend_normal.permute(1, 2, 0) @ R_wc).permute(2, 0, 1)
+            
             surf_normal = surf_normal.permute(2, 0, 1) # (H, W, 3) -> (3, H, W)
             loss_normal = (1 - torch.sum(rend_normal * surf_normal, dim=0)).mean()
             loss += config["Training"]["lambda_normal"] * loss_normal
@@ -136,6 +137,11 @@ def get_loss_mapping_rgb(config, image, depth, viewpoint, render_pkg=None):
             rend_normal = render_pkg["rend_normal"]
             surf_depth = render_pkg["depth"]
             surf_normal = depth_to_normal(viewpoint, surf_depth)
+            
+            # Transform View Space normal to World Space
+            R_wc = viewpoint.world_view_transform[:3, :3].T
+            rend_normal = (rend_normal.permute(1, 2, 0) @ R_wc).permute(2, 0, 1)
+            
             surf_normal = surf_normal.permute(2, 0, 1)
             loss_normal = (1 - torch.sum(rend_normal * surf_normal, dim=0)).mean()
             loss += config["Training"]["lambda_normal"] * loss_normal
@@ -173,6 +179,11 @@ def get_loss_mapping_rgbd(config, image, depth, viewpoint, initialization=False,
             
             # Use Ground Truth depth for normal reference to provide a stable geometric anchor
             surf_normal = depth_to_normal(viewpoint, gt_depth)
+            
+            # Transform View Space normal to World Space
+            R_wc = viewpoint.world_view_transform[:3, :3].T
+            rend_normal = (rend_normal.permute(1, 2, 0) @ R_wc).permute(2, 0, 1)
+            
             surf_normal = surf_normal.permute(2, 0, 1)
             loss_normal = (1 - torch.sum(rend_normal * surf_normal, dim=0)).mean()
             loss += config["Training"]["lambda_normal"] * loss_normal

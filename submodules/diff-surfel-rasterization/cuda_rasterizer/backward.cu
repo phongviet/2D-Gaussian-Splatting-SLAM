@@ -242,7 +242,6 @@ renderCUDA(
 	float accum_normal_rec[3] = {0};
 	// for compute gradient with respect to the distortion map
 	const float final_D = inside ? final_Ts[pix_id + H * W] : 0;
-	const float final_D2 = inside ? final_Ts[pix_id + 2 * H * W] : 0;
 	const float final_A = 1 - T_final;
 	float last_dL_dT = 0;
 #endif
@@ -365,12 +364,18 @@ renderCUDA(
 			// it will bia toward creating extragated 2D Gaussians near front
 			dL_dweight += 0;
 #else
-			dL_dweight += (final_D2 + m_d * m_d * final_A - 2 * m_d * final_D) * dL_dreg;
+			// Absolute distortion gradient: 2 * (m_d * (A_before - A_after) + (M_after - M_before))
+			float A_after = accum_alpha_rec;
+			float M_after = accum_depth_rec;
+			float A_before = final_A - A_after - alpha;
+			float M_before = final_D - M_after - alpha * m_d;
+			dL_dweight += 2.0f * (m_d * (A_before - A_after) + (M_after - M_before)) * dL_dreg;
 #endif
 			dL_dalpha += dL_dweight - last_dL_dT;
 			// propagate the current weight W_{i} to next weight W_{i-1}
 			last_dL_dT = dL_dweight * alpha + (1 - alpha) * last_dL_dT;
-			const float dL_dmd = 2.0f * (T * alpha) * (m_d * final_A - final_D) * dL_dreg;
+
+			const float dL_dmd = 2.0f * (T * alpha) * (A_before - A_after) * dL_dreg;
 			dL_dz += dL_dmd * dmd_dd;
 
 			// Propagate gradients w.r.t ray-splat depths
@@ -655,9 +660,9 @@ __device__ void compute_transmat_aabb(
 			float3 dL_dci = R_cw * dL_dwi;
 			float3 wi_c = transformVec4x3(basis_w[i], viewmatrix);
 			
-			dL_dtheta.x += dL_dci.y * wi_c.z - dL_dci.z * wi_c.y;
-			dL_dtheta.y += -dL_dci.x * wi_c.z + dL_dci.z * wi_c.x;
-			dL_dtheta.z += dL_dci.x * wi_c.y - dL_dci.y * wi_c.x;
+			dL_dtheta.x += wi_c.y * dL_dci.z - wi_c.z * dL_dci.y;
+			dL_dtheta.y += wi_c.z * dL_dci.x - wi_c.x * dL_dci.z;
+			dL_dtheta.z += wi_c.x * dL_dci.y - wi_c.y * dL_dci.x;
 		}
 
 		// 3. Normal Vector Contribution (Rotation only)
@@ -666,9 +671,9 @@ __device__ void compute_transmat_aabb(
 		float3 dL_dnc = R_cw * dL_dtn; // dL_dtn is already world-space gradient of normal
 		float3 n_c = transformVec4x3(normal_w, viewmatrix);
 
-		dL_dtheta.x += dL_dnc.y * n_c.z - dL_dnc.z * n_c.y;
-		dL_dtheta.y += -dL_dnc.x * n_c.z + dL_dnc.z * n_c.x;
-		dL_dtheta.z += dL_dnc.x * n_c.y - dL_dnc.y * n_c.x;
+		dL_dtheta.x += n_c.y * dL_dnc.z - n_c.z * dL_dnc.y;
+		dL_dtheta.y += n_c.z * dL_dnc.x - n_c.x * dL_dnc.z;
+		dL_dtheta.z += n_c.x * dL_dnc.y - n_c.y * dL_dnc.x;
 
 		// Accumulate rotation gradients
 		atomicAdd(&dL_dtau[3], dL_dtheta.x);
