@@ -311,6 +311,10 @@ class GaussianModel:
 
     def construct_list_of_attributes(self):
         l = ["x", "y", "z", "nx", "ny", "nz"]
+        # Add red, green, blue for SIBR viewer compatibility
+        l.append("red")
+        l.append("green")
+        l.append("blue")
         # All channels except the 3 DC
         for i in range(self._features_dc.shape[1] * self._features_dc.shape[2]):
             l.append("f_dc_{}".format(i))
@@ -348,12 +352,17 @@ class GaussianModel:
         scale = self._scaling.detach().cpu().numpy()
         rotation = self._rotation.detach().cpu().numpy()
 
+        # Calculate red, green, blue from SH features (DC components) 
+        # SH coefficients to RGB conversion: c0 * 0.28209479177387814 + 0.5
+        C0 = 0.28209479177387814
+        rgb = (f_dc * C0 + 0.5).clip(0, 1)
+
         dtype_full = [
             (attribute, "f4") for attribute in self.construct_list_of_attributes()
         ]
         elements = np.empty(xyz.shape[0], dtype=dtype_full)
         attributes = np.concatenate(
-            (xyz, normals, f_dc, f_rest, opacities, scale, rotation), axis=1
+            (xyz, normals, rgb, f_dc, f_rest, opacities, scale, rotation), axis=1
         )
         elements[:] = list(map(tuple, attributes))
         el = PlyElement.describe(elements, "vertex")
