@@ -229,8 +229,16 @@ class BackEnd(mp.Process):
                 n_touched_acm.append(n_touched)
 
             scaling = self.gaussians.get_scaling
-            isotropic_loss = torch.abs(scaling - scaling.mean(dim=1).view(-1, 1))
-            loss_mapping += 10 * isotropic_loss.mean()
+            if scaling.shape[1] == 2:
+                # 2DGS: Only penalize extreme scale ratios (prevent degenerate thin slivers)
+                # Allow anisotropy but prevent one scale being >10x the other
+                scale_ratio = scaling.max(dim=1).values / (scaling.min(dim=1).values + 1e-6)
+                scale_reg = torch.clamp(scale_ratio - 10.0, min=0.0)  # only activate for extreme ratios
+                loss_mapping += 0.1 * scale_reg.mean()
+            else:
+                # 3DGS: Original isotropic regularization
+                isotropic_loss = torch.abs(scaling - scaling.mean(dim=1).view(-1, 1))
+                loss_mapping += 10 * isotropic_loss.mean()
             loss_mapping.backward()
             gaussian_split = False
             ## Deinsifying / Pruning Gaussians
