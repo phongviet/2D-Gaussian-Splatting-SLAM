@@ -418,7 +418,7 @@ class FrontEnd(mp.Process):
 
                 last_keyframe_idx = self.current_window[0]
                 check_time = (cur_frame_idx - last_keyframe_idx) >= self.kf_interval
-                curr_visibility = (render_pkg["radii"] > 0).long()
+                curr_visibility = (render_pkg["n_touched"] > 0).long()
                 create_kf = self.is_keyframe(
                     cur_frame_idx,
                     last_keyframe_idx,

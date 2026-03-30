@@ -70,25 +70,6 @@ def get_loss_tracking_rgb(config, image, depth, opacity, viewpoint, render_pkg=N
     l1 = opacity * torch.abs(image * rgb_pixel_mask - gt_image * rgb_pixel_mask)
     loss = l1.mean()
 
-    if render_pkg is not None:
-        if "lambda_normal" in config["Training"] and config["Training"]["lambda_normal"] > 0:
-            rend_normal = render_pkg["rend_normal"]
-            surf_depth = render_pkg["depth"]
-            surf_normal = depth_to_normal(viewpoint, surf_depth)
-            
-            # Transform View Space normal to World Space
-            # rend_normal is (3, H, W) in View Space
-            R_wc = viewpoint.world_view_transform[:3, :3].T
-            rend_normal = (rend_normal.permute(1, 2, 0) @ R_wc).permute(2, 0, 1)
-            
-            surf_normal = surf_normal.permute(2, 0, 1) # (H, W, 3) -> (3, H, W)
-            loss_normal = (1 - torch.sum(rend_normal * surf_normal, dim=0)).mean()
-            loss += config["Training"]["lambda_normal"] * loss_normal
-
-        if "lambda_distortion" in config["Training"] and config["Training"]["lambda_distortion"] > 0:
-            rend_dist = render_pkg["rend_dist"]
-            loss += config["Training"]["lambda_distortion"] * rend_dist.mean()
-
     return loss
 
 
@@ -130,7 +111,12 @@ def get_loss_mapping_rgb(config, image, depth, viewpoint, render_pkg=None):
 
     rgb_pixel_mask = (gt_image.sum(dim=0) > rgb_boundary_threshold).view(*mask_shape)
     l1_rgb = torch.abs(image * rgb_pixel_mask - gt_image * rgb_pixel_mask)
-    loss = l1_rgb.mean()
+    from gaussian_splatting.utils.loss_utils import ssim
+    lambda_dssim = config.get("opt_params", {}).get("lambda_dssim", 0.2)
+    # OR reference config["Training"] if you prefer
+    l1_rgb = torch.abs(image * rgb_pixel_mask - gt_image * rgb_pixel_mask)
+    dssim = 1.0 - ssim(image * rgb_pixel_mask, gt_image * rgb_pixel_mask)
+    loss = (1.0 - lambda_dssim) * l1_rgb.mean() + lambda_dssim * dssim
 
     if render_pkg is not None:
         if "lambda_normal" in config["Training"] and config["Training"]["lambda_normal"] > 0:
@@ -143,7 +129,7 @@ def get_loss_mapping_rgb(config, image, depth, viewpoint, render_pkg=None):
             rend_normal = (rend_normal.permute(1, 2, 0) @ R_wc).permute(2, 0, 1)
             
             surf_normal = surf_normal.permute(2, 0, 1)
-            loss_normal = (1 - torch.abs(torch.sum(rend_normal * surf_normal, dim=0))).mean()
+            loss_normal = (1 - torch.sum(rend_normal * surf_normal, dim=0)).mean()
             loss += config["Training"]["lambda_normal"] * loss_normal
 
         if "lambda_distortion" in config["Training"] and config["Training"]["lambda_distortion"] > 0:
