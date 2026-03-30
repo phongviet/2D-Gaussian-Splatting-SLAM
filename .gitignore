@@ -14,3 +14,11 @@ datasets
 wandb
 
 result*
+.gitnexus
+
+*.md
+*.pdf
+!README.md
+*.log
+*.txt
+*.png

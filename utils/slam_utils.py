@@ -143,7 +143,7 @@ def get_loss_mapping_rgb(config, image, depth, viewpoint, render_pkg=None):
             rend_normal = (rend_normal.permute(1, 2, 0) @ R_wc).permute(2, 0, 1)
             
             surf_normal = surf_normal.permute(2, 0, 1)
-            loss_normal = (1 - torch.sum(rend_normal * surf_normal, dim=0)).mean()
+            loss_normal = (1 - torch.abs(torch.sum(rend_normal * surf_normal, dim=0))).mean()
             loss += config["Training"]["lambda_normal"] * loss_normal
 
         if "lambda_distortion" in config["Training"] and config["Training"]["lambda_distortion"] > 0:
