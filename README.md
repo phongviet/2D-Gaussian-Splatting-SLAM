@@ -16,7 +16,7 @@ git clone https://github.com/phongviet/2D-Gaussian-Splatting-SLAM.git --recursiv
 cd MonoGS
 conda env create -f environment.yml
 conda activate MonoGS
-cd submodules/diff-gaussian-rasterization
+cd submodules/diff-surfel-rasterization
 pip install -e .
 cd ../simple-knn
 pip install -e .
