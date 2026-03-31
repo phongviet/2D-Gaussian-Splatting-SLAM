@@ -136,7 +136,7 @@ class BackEnd(mp.Process):
                 self.gaussians.optimizer.step()
                 self.gaussians.optimizer.zero_grad(set_to_none=True)
 
-        self.occ_aware_visibility[cur_frame_idx] = (render_pkg["n_touched"] > 0).long()
+        self.occ_aware_visibility[cur_frame_idx] = (n_touched > 0).long()
         Log("Initialized map")
         return render_pkg
 
@@ -226,19 +226,10 @@ class BackEnd(mp.Process):
                 viewspace_point_tensor_acm.append(viewspace_point_tensor)
                 visibility_filter_acm.append(visibility_filter)
                 radii_acm.append(radii)
-                n_touched_acm.append(n_touched)
 
             scaling = self.gaussians.get_scaling
-            if scaling.shape[1] == 2:
-                # 2DGS: Only penalize extreme scale ratios (prevent degenerate thin slivers)
-                # Allow anisotropy but prevent one scale being >10x the other
-                scale_ratio = scaling.max(dim=1).values / (scaling.min(dim=1).values + 1e-6)
-                scale_reg = torch.clamp(scale_ratio - 10.0, min=0.0)  # only activate for extreme ratios
-                loss_mapping += 0.1 * scale_reg.mean()
-            else:
-                # 3DGS: Original isotropic regularization
-                isotropic_loss = torch.abs(scaling - scaling.mean(dim=1).view(-1, 1))
-                loss_mapping += 10 * isotropic_loss.mean()
+            isotropic_loss = torch.abs(scaling - scaling.mean(dim=1).view(-1, 1))
+            loss_mapping += 10 * isotropic_loss.mean()
             loss_mapping.backward()
             gaussian_split = False
             ## Deinsifying / Pruning Gaussians
@@ -246,8 +237,8 @@ class BackEnd(mp.Process):
                 self.occ_aware_visibility = {}
                 for idx in range((len(current_window))):
                     kf_idx = current_window[idx]
-                    radii_k = radii_acm[idx]
-                    self.occ_aware_visibility[kf_idx] = (n_touched_acm[idx] > 0).long()
+                    n_touched = n_touched_acm[idx]
+                    self.occ_aware_visibility[kf_idx] = (n_touched > 0).long()
 
                 # # compute the visibility of the gaussians
                 # # Only prune on the last iteration and when we have full window
