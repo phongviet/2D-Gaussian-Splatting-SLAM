@@ -10,8 +10,8 @@ Results:
 Dataset:
   type: 'tum'
   sensor_type: 'monocular'
-  pcd_downsample: 64
-  pcd_downsample_init: 32
+  pcd_downsample: 128
+  pcd_downsample_init: 64
   adaptive_pointsize: True
   point_size: 0.01
 
