@@ -253,7 +253,7 @@ class FrontEnd(mp.Process):
                 else 0.4
             )
             if not self.initialized:
-                cut_off = 0.1
+                cut_off = self.config["Training"].get("init_kf_cutoff", 0.4)
             if point_ratio_2 <= cut_off:
                 to_remove.append(kf_idx)
 
