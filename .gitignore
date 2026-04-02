@@ -17,8 +17,12 @@ result*
 .gitnexus
 
 *.md
+!PLAN_TUNING_DESK.md
+!PLAN_TUNING_DESK_ATTEMPT2.md
+!DRIFT_FIX.md
 *.pdf
 !README.md
 *.log
 *.txt
 *.png
+log/

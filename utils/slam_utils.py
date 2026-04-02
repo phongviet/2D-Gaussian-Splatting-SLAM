@@ -111,7 +111,6 @@ def get_loss_mapping_rgb(config, image, depth, viewpoint, render_pkg=None):
 
     rgb_pixel_mask = (gt_image.sum(dim=0) > rgb_boundary_threshold).view(*mask_shape)
     l1_rgb = torch.abs(image * rgb_pixel_mask - gt_image * rgb_pixel_mask)
-    return l1_rgb.mean()
     from gaussian_splatting.utils.loss_utils import ssim
     lambda_dssim = config.get("opt_params", {}).get("lambda_dssim", 0.2)
     # OR reference config["Training"] if you prefer
