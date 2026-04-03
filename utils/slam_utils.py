@@ -93,17 +93,17 @@ def get_loss_tracking_rgbd(
     return alpha * l1_rgb + (1 - alpha) * l1_depth.mean()
 
 
-def get_loss_mapping(config, image, depth, viewpoint, opacity, initialization=False, render_pkg=None):
+def get_loss_mapping(config, image, depth, viewpoint, opacity, initialization=False, render_pkg=None, iteration=0, total_iterations=1):
     if initialization:
         image_ab = image
     else:
         image_ab = (torch.exp(viewpoint.exposure_a)) * image + viewpoint.exposure_b
     if config["Training"]["monocular"]:
-        return get_loss_mapping_rgb(config, image_ab, depth, viewpoint, render_pkg=render_pkg)
-    return get_loss_mapping_rgbd(config, image_ab, depth, viewpoint, render_pkg=render_pkg)
+        return get_loss_mapping_rgb(config, image_ab, depth, viewpoint, render_pkg=render_pkg, iteration=iteration, total_iterations=total_iterations)
+    return get_loss_mapping_rgbd(config, image_ab, depth, viewpoint, render_pkg=render_pkg, iteration=iteration, total_iterations=total_iterations)
 
 
-def get_loss_mapping_rgb(config, image, depth, viewpoint, render_pkg=None):
+def get_loss_mapping_rgb(config, image, depth, viewpoint, render_pkg=None, iteration=0, total_iterations=1):
     gt_image = viewpoint.original_image.cuda()
     _, h, w = gt_image.shape
     mask_shape = (1, h, w)
@@ -120,26 +120,28 @@ def get_loss_mapping_rgb(config, image, depth, viewpoint, render_pkg=None):
 
     if render_pkg is not None:
         if "lambda_normal" in config["Training"] and config["Training"]["lambda_normal"] > 0:
-            rend_normal = render_pkg["rend_normal"]
-            surf_depth = render_pkg["depth"]
-            surf_normal = depth_to_normal(viewpoint, surf_depth)
-            
-            # Transform View Space normal to World Space
-            R_wc = viewpoint.world_view_transform[:3, :3].T
-            rend_normal = (rend_normal.permute(1, 2, 0) @ R_wc).permute(2, 0, 1)
-            
-            surf_normal = surf_normal.permute(2, 0, 1)
-            loss_normal = (1 - torch.sum(rend_normal * surf_normal, dim=0)).mean()
-            loss += config["Training"]["lambda_normal"] * loss_normal
+            if iteration > total_iterations / 2:
+                rend_normal = render_pkg["rend_normal"]
+                surf_depth = render_pkg["depth"]
+                surf_normal = depth_to_normal(viewpoint, surf_depth)
+                
+                # Transform View Space normal to World Space
+                R_wc = viewpoint.world_view_transform[:3, :3].T
+                rend_normal = (rend_normal.permute(1, 2, 0) @ R_wc).permute(2, 0, 1)
+                
+                surf_normal = surf_normal.permute(2, 0, 1)
+                loss_normal = (1 - torch.sum(rend_normal * surf_normal, dim=0)).mean()
+                loss += config["Training"]["lambda_normal"] * loss_normal
 
         if "lambda_distortion" in config["Training"] and config["Training"]["lambda_distortion"] > 0:
-            rend_dist = render_pkg["rend_dist"]
-            loss += config["Training"]["lambda_distortion"] * rend_dist.mean()
+            if iteration > total_iterations / 3:
+                rend_dist = render_pkg["rend_dist"]
+                loss += config["Training"]["lambda_distortion"] * rend_dist.mean()
 
     return loss
 
 
-def get_loss_mapping_rgbd(config, image, depth, viewpoint, initialization=False, render_pkg=None):
+def get_loss_mapping_rgbd(config, image, depth, viewpoint, initialization=False, render_pkg=None, iteration=0, total_iterations=1):
     alpha = config["Training"]["alpha"] if "alpha" in config["Training"] else 0.95
     rgb_boundary_threshold = config["Training"]["rgb_boundary_threshold"]
 
