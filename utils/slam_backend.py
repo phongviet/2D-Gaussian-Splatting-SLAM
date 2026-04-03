@@ -108,7 +108,8 @@ class BackEnd(mp.Process):
                 render_pkg["n_touched"],
             )
             loss_init = get_loss_mapping(
-                self.config, image, depth, viewpoint, opacity, initialization=True, render_pkg=render_pkg
+                self.config, image, depth, viewpoint, opacity, initialization=True, render_pkg=render_pkg,
+                iteration=mapping_iteration, total_iterations=self.init_itr_num
             )
             loss_init.backward()
 
@@ -154,7 +155,7 @@ class BackEnd(mp.Process):
                 continue
             random_viewpoint_stack.append(viewpoint)
 
-        for _ in range(iters):
+        for iter_idx in range(iters):
             self.iteration_count += 1
             self.last_sent += 1
 
@@ -191,7 +192,8 @@ class BackEnd(mp.Process):
                 )
 
                 loss_mapping += get_loss_mapping(
-                    self.config, image, depth, viewpoint, opacity, render_pkg=render_pkg
+                    self.config, image, depth, viewpoint, opacity, render_pkg=render_pkg,
+                    iteration=iter_idx, total_iterations=iters
                 )
                 viewspace_point_tensor_acm.append(viewspace_point_tensor)
                 visibility_filter_acm.append(visibility_filter)
@@ -221,7 +223,8 @@ class BackEnd(mp.Process):
                     render_pkg["n_touched"],
                 )
                 loss_mapping += get_loss_mapping(
-                    self.config, image, depth, viewpoint, opacity, render_pkg=render_pkg
+                    self.config, image, depth, viewpoint, opacity, render_pkg=render_pkg,
+                    iteration=iter_idx, total_iterations=iters
                 )
                 viewspace_point_tensor_acm.append(viewspace_point_tensor)
                 visibility_filter_acm.append(visibility_filter)
