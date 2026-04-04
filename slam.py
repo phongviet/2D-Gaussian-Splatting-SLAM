@@ -229,9 +229,10 @@ if __name__ == "__main__":
     if config["Results"]["save_results"]:
         mkdir_p(config["Results"]["save_dir"])
         current_datetime = datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
-        path = config["Dataset"]["dataset_path"].split("/")
+        # Accurate folder name (dataset_scene)
+        path = [p for p in config["Dataset"]["dataset_path"].split("/") if p]
         save_dir = os.path.join(
-            config["Results"]["save_dir"], path[-3] + "_" + path[-2], current_datetime
+            config["Results"]["save_dir"], path[-2] + "_" + path[-1], current_datetime
         )
         tmp = args.config
         tmp = tmp.split(".")[0]
