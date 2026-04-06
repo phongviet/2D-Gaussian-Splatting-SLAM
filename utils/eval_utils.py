@@ -22,7 +22,7 @@ from gaussian_splatting.utils.system_utils import mkdir_p
 from utils.logging_utils import Log
 
 
-def evaluate_evo(poses_gt, poses_est, plot_dir, label, monocular=False):
+def evaluate_evo(poses_gt, poses_est, plot_dir, label, monocular=False, gaussian_count=None):
     ## Plot
     traj_ref = PosePath3D(poses_se3=poses_gt)
     traj_est = PosePath3D(poses_se3=poses_est)
@@ -37,7 +37,10 @@ def evaluate_evo(poses_gt, poses_est, plot_dir, label, monocular=False):
     ape_metric.process_data(data)
     ape_stat = ape_metric.get_statistic(metrics.StatisticsType.rmse)
     ape_stats = ape_metric.get_all_statistics()
-    Log("RMSE ATE \[m]", ape_stat, tag="Eval")
+    if gaussian_count is not None:
+        Log(f"RMSE ATE [m] ({gaussian_count} gaussians)", ape_stat, tag="Eval")
+    else:
+        Log("RMSE ATE [m]", ape_stat, tag="Eval")
 
     with open(
         os.path.join(plot_dir, "stats_{}.json".format(str(label))),
@@ -65,7 +68,7 @@ def evaluate_evo(poses_gt, poses_est, plot_dir, label, monocular=False):
     return ape_stat
 
 
-def eval_ate(frames, kf_ids, save_dir, iterations, final=False, monocular=False):
+def eval_ate(frames, kf_ids, save_dir, iterations, final=False, monocular=False, gaussian_count=None):
     trj_data = dict()
     latest_frame_idx = kf_ids[-1] + 2 if final else kf_ids[-1] + 1
     trj_id, trj_est, trj_gt = [], [], []
@@ -108,6 +111,7 @@ def eval_ate(frames, kf_ids, save_dir, iterations, final=False, monocular=False)
         plot_dir=plot_dir,
         label=label_evo,
         monocular=monocular,
+        gaussian_count=gaussian_count,
     )
     wandb.log({"frame_idx": latest_frame_idx, "ate": ate})
     return ate
