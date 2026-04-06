@@ -456,4 +456,4 @@ if __name__ == "__main__":
     
     args = parser.parse_args()
     
-    view(args.dir, args.mode, args.ip, args.port)
+    view(os.path.abspath(args.dir), args.mode, args.ip, args.port)

@@ -360,6 +360,7 @@ class FrontEnd(mp.Process):
                             0,
                             final=True,
                             monocular=self.monocular,
+                            gaussian_count=self.gaussians.get_xyz.shape[0] if self.gaussians is not None else None,
                         )
                         save_gaussians(
                             self.gaussians, self.save_dir, "final", final=True
@@ -479,6 +480,7 @@ class FrontEnd(mp.Process):
                         self.save_dir,
                         cur_frame_idx,
                         monocular=self.monocular,
+                        gaussian_count=self.gaussians.get_xyz.shape[0] if self.gaussians is not None else None,
                     )
                 toc.record()
                 torch.cuda.synchronize()

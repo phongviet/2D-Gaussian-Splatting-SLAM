@@ -1,0 +1,8 @@
+inherit_from: "configs/mono/tum/fr1_desk.yaml"
+
+Training:
+  gaussian_th: 0.8
+
+opt_params:
+  densify_grad_threshold: 0.0003
+  densify_until_iter: 12000

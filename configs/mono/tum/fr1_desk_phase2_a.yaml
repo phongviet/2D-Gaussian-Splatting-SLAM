@@ -1,0 +1,4 @@
+inherit_from: "configs/mono/tum/fr1_desk.yaml"
+
+Training:
+  prune_coviz: 5

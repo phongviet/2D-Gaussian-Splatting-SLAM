@@ -128,6 +128,7 @@ class SLAM:
                 0,
                 final=True,
                 monocular=self.monocular,
+                gaussian_count=self.gaussians.get_xyz.shape[0],
             )
 
             rendering_result = eval_rendering(
