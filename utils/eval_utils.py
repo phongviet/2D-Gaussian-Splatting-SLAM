@@ -224,6 +224,34 @@ def eval_rendering(
     return output
 
 
+def save_eval_summary(
+    save_dir,
+    rmse_ate_m,
+    total_time_s,
+    total_fps,
+    gaussian_count,
+    rendering_result,
+):
+    if save_dir is None:
+        return
+
+    output = {
+        "rmse_ate_m": float(rmse_ate_m),
+        "gaussian_count": int(gaussian_count),
+        "total_time_s": float(total_time_s),
+        "total_fps": float(total_fps),
+        "mean_psnr": float(rendering_result["mean_psnr"]),
+        "mean_ssim": float(rendering_result["mean_ssim"]),
+        "mean_lpips": float(rendering_result["mean_lpips"]),
+    }
+
+    eval_summary_path = os.path.join(save_dir, "eval_summary.json")
+    with open(eval_summary_path, "w", encoding="utf-8") as f:
+        json.dump(output, f, indent=4)
+
+    Log(f"Saved eval summary to {eval_summary_path}", tag="Eval")
+
+
 def save_gaussians(gaussians, name, iteration, final=False):
     if name is None:
         return

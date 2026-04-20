@@ -15,7 +15,7 @@ from gaussian_splatting.utils.system_utils import mkdir_p
 from gui import gui_utils, slam_gui
 from utils.config_utils import load_config
 from utils.dataset import load_dataset
-from utils.eval_utils import eval_ate, eval_rendering, save_gaussians
+from utils.eval_utils import eval_ate, eval_rendering, save_eval_summary, save_gaussians
 from utils.logging_utils import Log
 from utils.multiprocessing_utils import FakeQueue
 from utils.slam_backend import BackEnd
@@ -114,13 +114,15 @@ class SLAM:
         torch.cuda.synchronize()
         # empty the frontend queue
         N_frames = len(self.frontend.cameras)
-        FPS = N_frames / (start.elapsed_time(end) * 0.001)
-        Log("Total time", start.elapsed_time(end) * 0.001, tag="Eval")
-        Log("Total FPS", N_frames / (start.elapsed_time(end) * 0.001), tag="Eval")
+        total_time_s = start.elapsed_time(end) * 0.001
+        FPS = N_frames / total_time_s
+        Log("Total time", total_time_s, tag="Eval")
+        Log("Total FPS", FPS, tag="Eval")
 
         if self.eval_rendering:
             self.gaussians = self.frontend.gaussians
             kf_indices = self.frontend.kf_indices
+            gaussian_count = self.gaussians.get_xyz.shape[0]
             ATE = eval_ate(
                 self.frontend.cameras,
                 self.frontend.kf_indices,
@@ -128,7 +130,7 @@ class SLAM:
                 0,
                 final=True,
                 monocular=self.monocular,
-                gaussian_count=self.gaussians.get_xyz.shape[0],
+                gaussian_count=gaussian_count,
             )
 
             rendering_result = eval_rendering(
@@ -140,6 +142,14 @@ class SLAM:
                 self.background,
                 kf_indices=kf_indices,
                 iteration="before_opt",
+            )
+            save_eval_summary(
+                self.save_dir,
+                rmse_ate_m=ATE,
+                total_time_s=total_time_s,
+                total_fps=FPS,
+                gaussian_count=gaussian_count,
+                rendering_result=rendering_result,
             )
             columns = ["tag", "psnr", "ssim", "lpips", "RMSE ATE", "FPS"]
             metrics_table = wandb.Table(columns=columns)
