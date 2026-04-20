@@ -12,6 +12,9 @@ from evo.tools import plot
 from evo.tools.plot import PlotMode
 from evo.tools.settings import SETTINGS
 from matplotlib import pyplot as plt
+import matplotlib
+matplotlib.use('Agg')
+import matplotlib.cm as cm
 from torchmetrics.image.lpip import LearnedPerceptualImagePatchSimilarity
 
 import wandb
@@ -20,6 +23,43 @@ from gaussian_splatting.utils.image_utils import psnr
 from gaussian_splatting.utils.loss_utils import ssim
 from gaussian_splatting.utils.system_utils import mkdir_p
 from utils.logging_utils import Log
+
+
+def fixed_traj_colormap(ax, traj, array, plot_mode, min_map, max_map, title=""):
+    """
+    Fixed version of evo.tools.plot.traj_colormap that explicitly passes 'ax' to colorbar.
+    This avoids the ValueError in Matplotlib 3.8+.
+    """
+    import matplotlib as mpl
+    from evo.tools.plot import colored_line_collection, PlotMode
+    
+    pos = traj.positions_xyz
+    norm = mpl.colors.Normalize(vmin=min_map, vmax=max_map, clip=True)
+    mapper = cm.ScalarMappable(
+        norm=norm,
+        cmap=SETTINGS.plot_trajectory_cmap)
+    mapper.set_array(array)
+    colors = [mapper.to_rgba(a) for a in array]
+    line_collection = colored_line_collection(pos, colors, plot_mode)
+    ax.add_collection(line_collection)
+    ax.autoscale_view(True, True, True)
+    if plot_mode == PlotMode.xyz:
+        ax.set_zlim(
+            np.amin(traj.positions_xyz[:, 2]),
+            np.amax(traj.positions_xyz[:, 2]))
+    
+    fig = ax.get_figure()
+    # Explicitly pass ax=ax to colorbar
+    cbar = fig.colorbar(
+        mapper, ax=ax, ticks=[min_map, (max_map - (max_map - min_map) / 2), max_map])
+    cbar.ax.set_yticklabels([
+        "{0:0.3f}".format(min_map),
+        "{0:0.3f}".format(max_map - (max_map - min_map) / 2),
+        "{0:0.3f}".format(max_map)
+    ])
+    if title:
+        ax.legend(frameon=True)
+        plt.title(title)
 
 
 def evaluate_evo(poses_gt, poses_est, plot_dir, label, monocular=False, gaussian_count=None):
@@ -54,7 +94,7 @@ def evaluate_evo(poses_gt, poses_est, plot_dir, label, monocular=False, gaussian
     ax = evo.tools.plot.prepare_axis(fig, plot_mode)
     ax.set_title(f"ATE RMSE: {ape_stat}")
     evo.tools.plot.traj(ax, plot_mode, traj_ref, "--", "gray", "gt")
-    evo.tools.plot.traj_colormap(
+    fixed_traj_colormap(
         ax,
         traj_est_aligned,
         ape_metric.error,
