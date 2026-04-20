@@ -62,8 +62,125 @@ class GaussianModel:
 
         self.config = config
         self.ply_input = None
+        self.last_insertion_stats = None
 
         self.isotropic = False
+
+    def _compute_min_distances_chunked(self, query_points, reference_points):
+        if reference_points.shape[0] == 0:
+            return torch.full(
+                (query_points.shape[0],),
+                float("inf"),
+                device=query_points.device,
+            )
+
+        training_cfg = self.config.get("Training", {}) if self.config else {}
+        query_chunk_size = max(1, int(training_cfg.get("insertion_query_chunk_size", 1024)))
+        ref_chunk_size = max(1, int(training_cfg.get("insertion_ref_chunk_size", 8192)))
+
+        min_dist = torch.full(
+            (query_points.shape[0],),
+            float("inf"),
+            device=query_points.device,
+        )
+
+        for q_start in range(0, query_points.shape[0], query_chunk_size):
+            q_end = min(q_start + query_chunk_size, query_points.shape[0])
+            query_chunk = query_points[q_start:q_end]
+            query_min = torch.full(
+                (query_chunk.shape[0],),
+                float("inf"),
+                device=query_points.device,
+            )
+
+            for r_start in range(0, reference_points.shape[0], ref_chunk_size):
+                r_end = min(r_start + ref_chunk_size, reference_points.shape[0])
+                reference_chunk = reference_points[r_start:r_end]
+                distances = torch.cdist(query_chunk, reference_chunk)
+                query_min = torch.minimum(query_min, distances.min(dim=1).values)
+
+            min_dist[q_start:q_end] = query_min
+
+        return min_dist
+
+    def _filter_dynamic_insertion_candidates(
+        self,
+        fused_point_cloud,
+        features,
+        scales,
+        rots,
+        opacities,
+        init=False,
+    ):
+        candidate_count = int(fused_point_cloud.shape[0])
+        stats = {
+            "enabled": False,
+            "mode": "disabled",
+            "tau": None,
+            "candidate_count": candidate_count,
+            "accepted_count": candidate_count,
+        }
+
+        training_cfg = self.config.get("Training", {}) if self.config else {}
+        dynamic_enabled = bool(training_cfg.get("dynamic_insertion_enabled", False))
+
+        if init or not dynamic_enabled or candidate_count == 0:
+            self.last_insertion_stats = stats
+            return fused_point_cloud, features, scales, rots, opacities
+
+        tau = float(training_cfg.get("insertion_tau", 0.03))
+        mode = str(training_cfg.get("insertion_distance_mode", "greater")).lower()
+        if mode not in {"greater", "less"}:
+            mode = "greater"
+
+        existing_xyz = self.get_xyz.detach()
+        if existing_xyz.shape[0] == 0:
+            keep_mask = torch.ones(
+                (candidate_count,),
+                dtype=torch.bool,
+                device=fused_point_cloud.device,
+            )
+            min_dist = torch.full(
+                (candidate_count,),
+                float("inf"),
+                device=fused_point_cloud.device,
+            )
+        else:
+            min_dist = self._compute_min_distances_chunked(
+                fused_point_cloud.detach(),
+                existing_xyz,
+            )
+            if mode == "less":
+                keep_mask = min_dist < tau
+            else:
+                keep_mask = min_dist > tau
+
+        max_new = int(training_cfg.get("insertion_max_new_per_kf", 20000))
+        if max_new > 0:
+            selected_indices = torch.nonzero(keep_mask, as_tuple=False).squeeze(1)
+            if selected_indices.numel() > max_new:
+                descending = mode == "greater"
+                ranked = torch.argsort(min_dist[selected_indices], descending=descending)
+                selected_indices = selected_indices[ranked[:max_new]]
+                keep_mask = torch.zeros_like(keep_mask)
+                keep_mask[selected_indices] = True
+
+        fused_point_cloud = fused_point_cloud[keep_mask]
+        features = features[keep_mask]
+        scales = scales[keep_mask]
+        rots = rots[keep_mask]
+        opacities = opacities[keep_mask]
+
+        stats = {
+            "enabled": True,
+            "mode": mode,
+            "tau": tau,
+            "candidate_count": candidate_count,
+            "accepted_count": int(keep_mask.sum().item()),
+        }
+        self.last_insertion_stats = stats
+
+        return fused_point_cloud, features, scales, rots, opacities
 
     def build_covariance_from_scaling_rotation(
         self, scaling, scaling_modifier, rotation
@@ -200,6 +317,17 @@ class GaussianModel:
             )
         )
 
+        fused_point_cloud, features, scales, rots, opacities = (
+            self._filter_dynamic_insertion_candidates(
+                fused_point_cloud,
+                features,
+                scales,
+                rots,
+                opacities,
+                init=init,
+            )
+        )
+
         return fused_point_cloud, features, scales, rots, opacities
 
     def init_lr(self, spatial_lr_scale):
@@ -208,6 +336,9 @@ class GaussianModel:
     def extend_from_pcd(
         self, fused_point_cloud, features, scales, rots, opacities, kf_id
     ):
+        if fused_point_cloud.shape[0] == 0:
+            return
+
         new_xyz = nn.Parameter(fused_point_cloud.requires_grad_(True))
         new_features_dc = nn.Parameter(
             features[:, :, 0:1].transpose(1, 2).contiguous().requires_grad_(True)
@@ -241,6 +372,7 @@ class GaussianModel:
         self.extend_from_pcd(
             fused_point_cloud, features, scales, rots, opacities, kf_id
         )
+        return self.last_insertion_stats
 
     def training_setup(self, training_args):
         self.percent_dense = training_args.percent_dense
