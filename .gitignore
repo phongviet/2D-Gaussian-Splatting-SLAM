@@ -26,3 +26,10 @@ result*
 *.txt
 *.png
 log/
+
+# Showcase artifacts
+.showcase_dummy
+.showcase_state
+
+# Archives
+*.zip

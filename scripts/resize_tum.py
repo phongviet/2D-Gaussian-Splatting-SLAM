@@ -13,8 +13,8 @@ def resize_image(path, target_size, is_depth=False):
     cv2.imwrite(path, resized)
 
 def main():
-    rgb_dir = "/home/2DGS_SLAM/MonoGS/datasets/tum/B1-802/rgb"
-    depth_dir = "/home/2DGS_SLAM/MonoGS/datasets/tum/B1-802/depth"
+    rgb_dir = "/home/2DGS_SLAM/2dgslam/datasets/tum/B1-802/rgb"
+    depth_dir = "/home/2DGS_SLAM/2dgslam/datasets/tum/B1-802/depth"
     target_size = (640, 480)
 
     rgb_files = glob.glob(os.path.join(rgb_dir, "*.png"))

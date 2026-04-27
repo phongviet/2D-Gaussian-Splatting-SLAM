@@ -186,9 +186,9 @@ def get_loss_mapping_rgbd(config, image, depth, viewpoint, initialization=False,
 def depths_to_points(view, depthmap):
     c2w = (view.world_view_transform.T).inverse()
     W, H = view.image_width, view.image_height
-    # MonoGS Camera might have different projection matrix structure.
-    # In MonoGS Camera: self.projection_matrix = getProjectionMatrix2(...)
-    # Let's use the same logic as 2DGS but adapt it to MonoGS Camera.
+    # 2dgslam Camera might have different projection matrix structure.
+    # In 2dgslam Camera: self.projection_matrix = getProjectionMatrix2(...)
+    # Let's use the same logic as 2DGS but adapt it to 2dgslam Camera.
     
     # In 2DGS, ndc2pix is used.
     ndc2pix = torch.tensor([
@@ -196,7 +196,7 @@ def depths_to_points(view, depthmap):
         [0, H / 2, 0, (H) / 2],
         [0, 0, 0, 1]]).float().cuda().T
     
-    # In MonoGS viewpoint (Camera), full_proj_transform is world2pix-ish?
+    # In 2dgslam viewpoint (Camera), full_proj_transform is world2pix-ish?
     # No, it's projection @ world2view.
     projection_matrix = c2w.T @ viewpoint_full_proj_transform(view)
     intrins = (projection_matrix @ ndc2pix)[:3, :3].T
@@ -211,7 +211,7 @@ def depths_to_points(view, depthmap):
 
 
 def viewpoint_full_proj_transform(view):
-    # MonoGS Camera object has full_proj_transform attribute (or result of update_RT)
+    # 2dgslam Camera object has full_proj_transform attribute (or result of update_RT)
     return view.full_proj_transform
 
 

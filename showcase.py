@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-MonoGS Showcase — Dual-Pane Side-by-Side Gaussian Splatting Viewer
+2dgslam Showcase — Dual-Pane Side-by-Side Gaussian Splatting Viewer
 
 Renders two Gaussian Splatting scenes side-by-side for A/B comparison.
 Serves rendered frames to the SIBR remote viewer (SIBR_remoteGaussian_app).
@@ -563,7 +563,7 @@ class ShowcaseApp:
 
         # Build tkinter GUI
         self.root = tk.Tk()
-        self.root.title("MonoGS Showcase — Control Panel")
+        self.root.title("2dgslam Showcase — Control Panel")
         self.root.geometry("560x500")
         self.root.resizable(True, True)
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
@@ -599,7 +599,7 @@ class ShowcaseApp:
         # Title
         ttk.Label(
             main,
-            text="MonoGS Showcase Viewer",
+            text="2dgslam Showcase Viewer",
             font=("Helvetica", 15, "bold"),
         ).pack(pady=(0, 8))
 
@@ -922,7 +922,7 @@ class ShowcaseApp:
 # ═══════════════════════════════════════════════════════════════════════════
 
 if __name__ == "__main__":
-    parser = ArgumentParser(description="MonoGS Showcase — Dual-Pane Viewer")
+    parser = ArgumentParser(description="2dgslam Showcase — Dual-Pane Viewer")
     parser.add_argument("--ip", type=str, default="127.0.0.1")
     parser.add_argument("--port", type=int, default=6009)
     parser.add_argument(

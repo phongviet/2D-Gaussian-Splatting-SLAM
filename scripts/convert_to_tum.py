@@ -36,8 +36,8 @@ def save_config(target_config_path, dataset_name, intrinsics, is_mono=False):
 
 def convert():
     dataset_name = "laptoppiano"
-    base_path = f"/home/2DGS_SLAM/MonoGS/datasets/wild/{dataset_name}"
-    target_path = f"/home/2DGS_SLAM/MonoGS/datasets/tum/{dataset_name}"
+    base_path = f"/home/2DGS_SLAM/2dgslam/datasets/wild/{dataset_name}"
+    target_path = f"/home/2DGS_SLAM/2dgslam/datasets/tum/{dataset_name}"
     
     rgb_video = os.path.join(base_path, "rgb.mp4")
     odom_file = os.path.join(base_path, "odometry.csv")
@@ -75,8 +75,8 @@ def convert():
         print(f"Scaled Intrinsics: fx={scaled_intrinsics[0]:.4f}, fy={scaled_intrinsics[1]:.4f}, cx={scaled_intrinsics[2]:.4f}, cy={scaled_intrinsics[3]:.4f}")
         
         # Save configs
-        save_config(f"/home/2DGS_SLAM/MonoGS/configs/rgbd/tum/{dataset_name}.yaml", dataset_name, scaled_intrinsics, is_mono=False)
-        save_config(f"/home/2DGS_SLAM/MonoGS/configs/mono/tum/{dataset_name}.yaml", dataset_name, scaled_intrinsics, is_mono=True)
+        save_config(f"/home/2DGS_SLAM/2dgslam/configs/rgbd/tum/{dataset_name}.yaml", dataset_name, scaled_intrinsics, is_mono=False)
+        save_config(f"/home/2DGS_SLAM/2dgslam/configs/mono/tum/{dataset_name}.yaml", dataset_name, scaled_intrinsics, is_mono=True)
     else:
         print("Warning: camera_matrix.csv not found, skipping config generation.")
 

@@ -23,7 +23,7 @@ RUNS = [
     ("D2", "configs/mono/tum/fr1_desk_drift_D2.yaml"),
 ]
 
-LOG_DIR = Path("/home/2DGS_SLAM/MonoGS/log")
+LOG_DIR = Path("/home/2DGS_SLAM/2dgslam/log")
 SUMMARY_PATH = LOG_DIR / "drift_matrix_summary.tsv"
 
 MAX_SECONDS = 4200
@@ -53,7 +53,7 @@ def parse_log(log_path: Path):
     text = log_path.read_text(errors="ignore") if log_path.exists() else ""
     result_match = re.search(r"results/tum_rgbd_dataset_freiburg1_desk/[0-9\-]+", text)
     result_path = result_match.group(0) if result_match else ""
-    reset_count = text.count("MonoGS: Resetting the system")
+    reset_count = text.count("2dgslam: Resetting the system")
     overlap = "Keyframes lacks sufficient overlap" in text
 
     evals = []
@@ -117,7 +117,7 @@ def main():
                     "conda",
                     "run",
                     "-n",
-                    "MonoGS",
+                    "2dgslam",
                     "--no-capture-output",
                     "python",
                     "-u",
@@ -125,7 +125,7 @@ def main():
                     "--config",
                     cfg,
                 ],
-                cwd="/home/2DGS_SLAM/MonoGS",
+                cwd="/home/2DGS_SLAM/2dgslam",
                 stdout=f,
                 stderr=subprocess.STDOUT,
             )
@@ -161,7 +161,7 @@ def main():
             [
                 rid,
                 cfg,
-                str(log_path.relative_to("/home/2DGS_SLAM/MonoGS")),
+                str(log_path.relative_to("/home/2DGS_SLAM/2dgslam")),
                 m["result_path"],
                 fmt(m["reset_count"]),
                 fmt(m["overlap"]),

@@ -89,7 +89,7 @@ class MiniCam:
         view_inv = torch.inverse(self.world_view_transform)
         self.camera_center = view_inv[3, :3]
         
-        # Derive projection_matrix for MonoGS renderer: VP = V @ P => P = V^-1 @ VP
+        # Derive projection_matrix for 2dgslam renderer: VP = V @ P => P = V^-1 @ VP
         self.projection_matrix = view_inv @ self.full_proj_transform
         
         self.cam_rot_delta = torch.zeros(3, device="cuda")
@@ -324,7 +324,7 @@ def ensure_monitor_scene(model_dir, gaussians=None):
         
         cameras = []
         for i, pose_mat in enumerate(trj_data.get("trj_est", [])):
-            # In MonoGS Baseline, 'rotation' is the first 3x3 of C2W matrix
+            # In 2dgslam Baseline, 'rotation' is the first 3x3 of C2W matrix
             # and 'position' is the 4th column of C2W matrix.
             pose = torch.tensor(pose_mat).float()
             rot = pose[:3, :3].tolist()
@@ -448,7 +448,7 @@ def view(model_dir, mode, ip, port):
                     network_gui.conn = None
 
 if __name__ == "__main__":
-    parser = ArgumentParser(description="MonoGS Results Viewer")
+    parser = ArgumentParser(description="2dgslam Results Viewer")
     parser.add_argument("--mode", type=str, choices=["2dgs", "3dgs"], default="2dgs")
     parser.add_argument("--dir", type=str, required=True, help="Path to the result directory (containing config.yml and point_cloud/)")
     parser.add_argument("--ip", type=str, default="127.0.0.1")
