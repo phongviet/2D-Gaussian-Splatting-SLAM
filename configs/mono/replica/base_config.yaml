@@ -2,18 +2,32 @@ Results:
   save_results: True
   save_dir: "results"
   save_trj: True
-  save_trj_kf_intv: 10
+  save_trj_kf_intv: 20
   use_gui: True
   eval_rendering: True
   use_wandb: False
 
 Dataset:
-  type: 'tum'
   sensor_type: 'monocular'
   pcd_downsample: 64
   pcd_downsample_init: 32
   adaptive_pointsize: True
-  point_size: 0.01
+  point_size: 0.05
+  type: 'replica'
+  Calibration:
+    fx: 600.0
+    fy: 600.0
+    cx: 599.5
+    cy: 339.5
+    k1: 0.0
+    k2: 0.0
+    p1: 0.0
+    p2: 0.0
+    k3: 0.0
+    width: 1200
+    height: 680
+    depth_scale: 6553.5
+    distorted: False
 
 Training:
   init_itr_num: 1050
@@ -27,12 +41,7 @@ Training:
   gaussian_update_offset: 50
   gaussian_th: 0.7
   gaussian_extent: 1.0
-  dynamic_insertion_enabled: True
-  insertion_tau: 0.03
-  insertion_distance_mode: "greater"
-  insertion_max_new_per_kf: 20000
-  insertion_query_chunk_size: 1024
-  insertion_ref_chunk_size: 8192
+  dynamic_insertion_enabled: False
   gaussian_reset: 2001
   size_threshold: 20
   kf_interval: 5
@@ -51,7 +60,6 @@ Training:
   prune_mode: 'slam'
   single_thread: False
   spherical_harmonics: False
-
   lr:
     cam_rot_delta: 0.003
     cam_trans_delta: 0.001
@@ -81,7 +89,7 @@ model_params:
   resolution: -1
   white_background: False
   data_device: "cuda"
-
+  
 pipeline_params:
   convert_SHs_python: False
   compute_cov3D_python: False
