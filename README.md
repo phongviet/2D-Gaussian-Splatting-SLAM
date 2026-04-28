@@ -1,12 +1,11 @@
 # 2dgslam: 2D Gaussian Splatting for Dense SLAM
 
-This repository implements a dense SLAM system based on **2D Gaussian Splatting (2DGS)**, extending the **2dgslam** framework. By representing the scene with oriented circular disks (surfels) instead of standard 3D ellipsoids, **2dgslam** achieves more accurate surface modeling, improved tracking stability via **analytic Pose Jacobians**, and high-quality geometry reconstruction using **Normal** and **Distortion** losses.
+This repository implements a dense SLAM system based on **2D Gaussian Splatting (2DGS)**, extending the **MonoGS** framework. By representing the scene with oriented circular disks (surfels) instead of standard 3D ellipsoids, **2dgslam** achieves more accurate surface modeling, improved tracking stability via **analytic Pose Jacobians**, and high-quality geometry reconstruction using **Normal** and **Distortion** losses.
 
 ## Key Features
 - **2D Gaussian Primitives**: Oriented surfels/disks for better surface representation and fewer "cloudy" artifacts.
 - **Analytic Pose Jacobians**: Custom CUDA implementation for stable and fast camera tracking.
 - **Advanced Loss Functions**: Includes Normal Consistency and Distortion losses to regularize geometry.
-- **Versatile Modes**: Supports Monocular and RGB-D SLAM on standard datasets like TUM RGB-D.
 - **Performance**: High tracking accuracy with stable ATE RMSE across challenging sequences.
 
 ## Getting Started
