@@ -27,8 +27,8 @@ Training:
   gaussian_update_offset: 50
   gaussian_th: 0.7
   gaussian_extent: 1.0
-  dynamic_insertion_enabled: True
-  insertion_tau: 0.03
+  dynamic_insertion_enabled: False
+  insertion_tau: 0.05
   insertion_distance_mode: "greater"
   insertion_max_new_per_kf: 20000
   insertion_query_chunk_size: 1024
@@ -67,7 +67,7 @@ opt_params:
   scaling_lr: 0.001
   rotation_lr: 0.001
   percent_dense: 0.01
-  lambda_dssim: 0.2
+  lambda_dssim: 0.0
   densification_interval: 100
   opacity_reset_interval: 3000
   densify_from_iter: 500

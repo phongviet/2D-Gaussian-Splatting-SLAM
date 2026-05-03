@@ -293,7 +293,7 @@ class FrontEnd(mp.Process):
         self.backend_queue.put(msg)
         self.requested_keyframe += 1
 
-    def reqeust_mapping(self, cur_frame_idx, viewpoint):
+    def request_mapping(self, cur_frame_idx, viewpoint):
         msg = ["map", cur_frame_idx, viewpoint.to_dict()]
         self.backend_queue.put(msg)
 

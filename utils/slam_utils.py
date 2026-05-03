@@ -111,16 +111,11 @@ def get_loss_mapping_rgb(config, image, depth, viewpoint, render_pkg=None, itera
 
     rgb_pixel_mask = (gt_image.sum(dim=0) > rgb_boundary_threshold).view(*mask_shape)
     l1_rgb = torch.abs(image * rgb_pixel_mask - gt_image * rgb_pixel_mask)
-    from gaussian_splatting.utils.loss_utils import ssim
-    lambda_dssim = config.get("opt_params", {}).get("lambda_dssim", 0.2)
-    # OR reference config["Training"] if you prefer
-    l1_rgb = torch.abs(image * rgb_pixel_mask - gt_image * rgb_pixel_mask)
-    dssim = 1.0 - ssim(image * rgb_pixel_mask, gt_image * rgb_pixel_mask)
-    loss = (1.0 - lambda_dssim) * l1_rgb.mean() + lambda_dssim * dssim
+    loss = l1_rgb.mean()
 
     if render_pkg is not None:
         if "lambda_normal" in config["Training"] and config["Training"]["lambda_normal"] > 0:
-            if iteration > total_iterations / 2:
+            if iteration > total_iterations / 4:
                 rend_normal = render_pkg["rend_normal"]
                 surf_depth = render_pkg["depth"]
                 surf_normal = depth_to_normal(viewpoint, surf_depth)
@@ -134,7 +129,7 @@ def get_loss_mapping_rgb(config, image, depth, viewpoint, render_pkg=None, itera
                 loss += config["Training"]["lambda_normal"] * loss_normal
 
         if "lambda_distortion" in config["Training"] and config["Training"]["lambda_distortion"] > 0:
-            if iteration > total_iterations / 3:
+            if iteration > total_iterations / 10:
                 rend_dist = render_pkg["rend_dist"]
                 loss += config["Training"]["lambda_distortion"] * rend_dist.mean()
 
