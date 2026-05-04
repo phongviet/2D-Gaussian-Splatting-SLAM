@@ -1,11 +1,13 @@
-# 2dgslam: 2D Gaussian Splatting for Dense SLAM
+# 2DGSLAM: 2D Gaussian Splatting for Dense SLAM
 
-This repository implements a dense SLAM system based on **2D Gaussian Splatting (2DGS)**, extending the **MonoGS** framework. By representing the scene with oriented circular disks (surfels) instead of standard 3D ellipsoids, **2dgslam** achieves more accurate surface modeling, improved tracking stability via **analytic Pose Jacobians**, and high-quality geometry reconstruction using **Normal** and **Distortion** losses.
+This repository implements a dense SLAM system based on **2D Gaussian Splatting (2DGS)**, extending the **MonoGS** framework. By representing the scene with oriented circular disks (surfels) instead of standard 3D ellipsoids, **2DGSLAM** achieves more accurate surface modeling and high-quality geometry reconstruction.
+
+![Comparison on TUM fr3_office (Frame 2134)](media/comparison_frame_2134.png)
 
 ## Getting Started
 ### Installation
 
-This system requires a CUDA-enabled GPU. These instructions are verified for **Ubuntu 24.04** with **CUDA 12.x**.
+This system requires a CUDA-enabled GPU. These instructions are verified for **Ubuntu 24.04** with **CUDA 12.8**.
 
 The recommended environment below is the one that was successfully used to reproduce Kaggle behavior locally.
 
@@ -62,21 +64,39 @@ To run the system in headless mode and log metrics (ATE and rendering quality):
 python slam.py --config configs/mono/replica/office0.yaml --eval
 ```
 
-### Quantitative Results (Monocular)
+### Quantitative Results (Monocular Comparison)
 
-| Dataset | Sequence | RMSE ATE (m) ↓ | PSNR (dB) ↑ | SSIM ↑ | LPIPS ↓ |
-| :--- | :--- | :---: | :---: | :---: | :---: |
-| **TUM** | `fr1_desk` | 0.0229 | 17.85 | 0.654 | 0.396 |
-| | `fr2_xyz` | 0.0335 | 15.72 | 0.674 | 0.330 |
-| | `fr3_office` | 0.0368 | 18.64 | 0.713 | 0.351 |
-| **Replica** | `office0` | 0.0959 | 30.79 | 0.893 | 0.254 |
-| | `office1` | 0.1277 | 31.76 | 0.906 | 0.233 |
-| | `office2` | 0.2064 | 24.87 | 0.857 | 0.276 |
-| | `office3` | 0.0461 | 28.92 | 0.887 | 0.194 |
-| | `office4` | 0.0351 | 28.94 | 0.901 | 0.222 |
-| | `room0` | 0.0425 | 27.73 | 0.848 | 0.205 |
-| | `room1` | 0.2988 | 25.04 | 0.788 | 0.345 |
-| | `room2` | 0.0233 | 29.29 | 0.884 | 0.219 |
+We compare **2DGSLAM** (this repo) against the **Gaussian Splatting SLAM (MonoGS)** baseline across all sequences. All results use monocular camera input.
+
+#### 1. TUM RGB-D Dataset
+| Method | Sequence | ATE RMSE (m) ↓ | Depth L1 (cm) ↓ | PSNR ↑ |
+| :--- | :--- | :---: | :---: | :---: |
+| 2DGSLAM | `fr1_desk` | **0.0229** | **13.62** | **17.85** |
+| MonoGS | | 0.0359 | 15.13 | 17.51 |
+| 2DGSLAM | `fr2_xyz` | **0.0335** | **41.00** | **15.72** |
+| MonoGS | | 0.0471 | 49.55 | 15.51 |
+| 2DGSLAM | `fr3_office`| 0.0368 | 30.75 | 18.64 |
+| MonoGS | | **0.0253** | **28.91** | **19.50** |
+
+#### 2. Replica Dataset (Reconstruction & Tracking)
+| Method | Sequence | ATE RMSE (m) ↓ | Depth L1 (cm) ↓ | PSNR ↑ |
+| :--- | :--- | :---: | :---: | :---: |
+| 2DGSLAM | `office0` | 0.0959 | 15.69 | 30.79 |
+| MonoGS | | **0.0696** | **12.92** | 30.79 |
+| 2DGSLAM | `office1` | 0.1277 | 50.94 | 31.76 |
+| MonoGS | | **0.1057** | **42.57** | **32.93** |
+| 2DGSLAM | `office2` | 0.2064 | 33.95 | 24.87 |
+| MonoGS | | **0.1503** | **28.37** | **26.56** |
+| 2DGSLAM | `office3` | 0.0461 | 18.97 | 28.92 |
+| MonoGS | | **0.0386** | **17.27** | **30.06** |
+| 2DGSLAM | `office4` | **0.0351** | **11.84** | **28.94** |
+| MonoGS | | 0.2387 | 39.03 | 27.75 |
+| 2DGSLAM | `room0` | **0.0425** | **11.37** | **27.73** |
+| MonoGS | | 0.0445 | 15.72 | 27.71 |
+| 2DGSLAM | `room1` | **0.2988** | **54.75** | **25.04** |
+| MonoGS | | 0.5329 | 128.28 | 24.92 |
+| 2DGSLAM | `room2` | 0.0233 | **9.41** | 29.29 |
+| MonoGS | | **0.0188** | 10.68 | **30.44** |
 
 ## Acknowledgments
 This work is built upon:

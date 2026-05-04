@@ -25,6 +25,8 @@ result*
 *.log
 *.txt
 *.png
+!media/
+!media/*.png
 log/
 
 # Showcase artifacts
