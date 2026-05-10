@@ -143,6 +143,7 @@ class SLAM:
                 kf_indices=kf_indices,
                 iteration="before_opt",
             )
+            depth_l1_cm = rendering_result.get("mean_depth_l1")
             save_eval_summary(
                 self.save_dir,
                 rmse_ate_m=ATE,
@@ -150,6 +151,7 @@ class SLAM:
                 total_fps=FPS,
                 gaussian_count=gaussian_count,
                 rendering_result=rendering_result,
+                depth_l1_cm=depth_l1_cm,
             )
             columns = ["tag", "psnr", "ssim", "lpips", "RMSE ATE", "FPS"]
             metrics_table = wandb.Table(columns=columns)

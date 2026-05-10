@@ -27,12 +27,6 @@ Training:
   gaussian_update_offset: 50
   gaussian_th: 0.7
   gaussian_extent: 1.0
-  dynamic_insertion_enabled: False
-  insertion_tau: 0.05
-  insertion_distance_mode: "greater"
-  insertion_max_new_per_kf: 20000
-  insertion_query_chunk_size: 1024
-  insertion_ref_chunk_size: 8192
   gaussian_reset: 2001
   size_threshold: 20
   kf_interval: 5

@@ -110,7 +110,17 @@ class SLAM_GUI:
         )
 
         bounds = self.widget3d.scene.bounding_box
-        self.widget3d.setup_camera(60.0, bounds, bounds.get_center())
+        # Guard against empty/degenerate bounding box at init — Filament
+        # rejects near >= far and logs "Camera preconditions not met".
+        if not bounds.is_empty():
+            self.widget3d.setup_camera(60.0, bounds, bounds.get_center())
+        else:
+            default_bounds = o3d.geometry.AxisAlignedBoundingBox(
+                [-1, -1, -1], [1, 1, 1]
+            )
+            self.widget3d.setup_camera(
+                60.0, default_bounds, default_bounds.get_center()
+            )
         em = self.window.theme.font_size
         margin = 0.5 * em
         self.panel = gui.Vert(0.5 * em, gui.Margins(margin))
@@ -508,7 +518,10 @@ class SLAM_GUI:
         )
         valid_mask = valid_mask > 0.5
 
-        # get cross product (B, 3, H, W)
+        # get cross product (B, 3, H, W); guard against empty tensors
+        if vec_vert.numel() == 0 or vec_hori.numel() == 0:
+            normal = torch.zeros_like(points)
+            return normal, valid_mask
         cross_product = -torch.linalg.cross(vec_vert, vec_hori, dim=1)
         normal = F.normalize(cross_product, p=2.0, dim=1, eps=1e-12)
         return normal, valid_mask

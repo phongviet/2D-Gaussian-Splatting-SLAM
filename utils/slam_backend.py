@@ -66,22 +66,9 @@ class BackEnd(mp.Process):
         )
 
     def add_next_kf(self, frame_idx, viewpoint, init=False, scale=2.0, depth_map=None):
-        insertion_stats = self.gaussians.extend_from_pcd_seq(
+        self.gaussians.extend_from_pcd_seq(
             viewpoint, kf_id=frame_idx, init=init, scale=scale, depthmap=depth_map
         )
-        if insertion_stats and insertion_stats.get("enabled", False):
-            candidate_count = insertion_stats.get("candidate_count", 0)
-            accepted_count = insertion_stats.get("accepted_count", 0)
-            accepted_ratio = accepted_count / max(1, candidate_count)
-            Log(
-                (
-                    f"Dynamic insertion kf={frame_idx}: "
-                    f"{accepted_count}/{candidate_count} kept "
-                    f"({accepted_ratio:.2%}), "
-                    f"tau={insertion_stats.get('tau', 0.0):.4f}, "
-                    f"mode={insertion_stats.get('mode', 'greater')}"
-                )
-            )
 
     def reset(self):
         self.iteration_count = 0

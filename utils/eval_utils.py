@@ -170,7 +170,7 @@ def eval_rendering(
     interval = 5
     img_pred, img_gt, saved_frame_idx = [], [], []
     end_idx = len(frames) - 1 if iteration == "final" or "before_opt" else iteration
-    psnr_array, ssim_array, lpips_array = [], [], []
+    psnr_array, ssim_array, lpips_array, depth_l1_array = [], [], [], []
     cal_lpips = LearnedPerceptualImagePatchSimilarity(
         net_type="alex", normalize=True
     ).to("cuda")
@@ -179,9 +179,11 @@ def eval_rendering(
             continue
         saved_frame_idx.append(idx)
         frame = frames[idx]
-        gt_image, _, _ = dataset[idx]
+        gt_image, _, gt_depth = dataset[idx]
 
-        rendering = render(frame, gaussians, pipe, background)["render"]
+        render_result = render(frame, gaussians, pipe, background)
+        rendering = render_result["render"]
+        depth = render_result["depth"]
         image = torch.clamp(rendering, 0.0, 1.0)
 
         gt = (gt_image.cpu().numpy().transpose((1, 2, 0)) * 255).astype(np.uint8)
@@ -203,13 +205,29 @@ def eval_rendering(
         ssim_array.append(ssim_score.item())
         lpips_array.append(lpips_score.item())
 
+        gt_d = None
+        if gt_depth is not None:
+            if hasattr(gt_depth, "numpy"):
+                gt_d = gt_depth.cpu().numpy()[0]
+            elif hasattr(gt_depth[0], "cpu"):
+                gt_d = gt_depth[0].cpu().numpy()
+            else:
+                gt_d = gt_depth[0]
+        if gt_d is not None:
+            pred_d = depth[0, :, :].detach().cpu().numpy()
+            valid_mask = gt_d > 0.01
+            if valid_mask.sum() > 0:
+                depth_l1 = np.abs(pred_d[valid_mask] - gt_d[valid_mask]).mean()
+                depth_l1_array.append(depth_l1)
+
     output = dict()
     output["mean_psnr"] = float(np.mean(psnr_array))
     output["mean_ssim"] = float(np.mean(ssim_array))
     output["mean_lpips"] = float(np.mean(lpips_array))
+    output["mean_depth_l1"] = float(np.mean(depth_l1_array)) if depth_l1_array else None
 
     Log(
-        f'mean psnr: {output["mean_psnr"]}, ssim: {output["mean_ssim"]}, lpips: {output["mean_lpips"]}',
+        f'mean psnr: {output["mean_psnr"]}, ssim: {output["mean_ssim"]}, lpips: {output["mean_lpips"]}, depth_l1_cm: {output["mean_depth_l1"]}',
         tag="Eval",
     )
 
@@ -231,6 +249,7 @@ def save_eval_summary(
     total_fps,
     gaussian_count,
     rendering_result,
+    depth_l1_cm=None,
 ):
     if save_dir is None:
         return
@@ -244,6 +263,8 @@ def save_eval_summary(
         "mean_ssim": float(rendering_result["mean_ssim"]),
         "mean_lpips": float(rendering_result["mean_lpips"]),
     }
+    if depth_l1_cm is not None:
+        output["mean_depth_l1_cm"] = float(depth_l1_cm)
 
     eval_summary_path = os.path.join(save_dir, "eval_summary.json")
     with open(eval_summary_path, "w", encoding="utf-8") as f:
