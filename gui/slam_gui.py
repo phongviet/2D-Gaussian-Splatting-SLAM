@@ -1,3 +1,6 @@
+import os
+os.environ.setdefault("PYOPENGL_PLATFORM", "egl")
+
 import pathlib
 import threading
 import time
@@ -88,6 +91,20 @@ class SLAM_GUI:
         self.widget3d = gui.SceneWidget()
         self.widget3d.scene = rendering.Open3DScene(self.window.renderer)
 
+        bounds = self.widget3d.scene.bounding_box
+        # Guard against empty/degenerate bounding box at init — Filament
+        # rejects near >= far and logs "Camera preconditions not met".
+        # MUST be set before scene.view is accessed (scene.view triggers setProjection).
+        if not bounds.is_empty():
+            self.widget3d.setup_camera(60.0, bounds, bounds.get_center())
+        else:
+            default_bounds = o3d.geometry.AxisAlignedBoundingBox(
+                [-1, -1, -1], [1, 1, 1]
+            )
+            self.widget3d.setup_camera(
+                60.0, default_bounds, default_bounds.get_center()
+            )
+
         cg_settings = rendering.ColorGrading(
             rendering.ColorGrading.Quality.ULTRA,
             rendering.ColorGrading.ToneMapping.LINEAR,
@@ -108,19 +125,6 @@ class SLAM_GUI:
         self.axis = o3d.geometry.TriangleMesh.create_coordinate_frame(
             size=0.5, origin=[0, 0, 0]
         )
-
-        bounds = self.widget3d.scene.bounding_box
-        # Guard against empty/degenerate bounding box at init — Filament
-        # rejects near >= far and logs "Camera preconditions not met".
-        if not bounds.is_empty():
-            self.widget3d.setup_camera(60.0, bounds, bounds.get_center())
-        else:
-            default_bounds = o3d.geometry.AxisAlignedBoundingBox(
-                [-1, -1, -1], [1, 1, 1]
-            )
-            self.widget3d.setup_camera(
-                60.0, default_bounds, default_bounds.get_center()
-            )
         em = self.window.theme.font_size
         margin = 0.5 * em
         self.panel = gui.Vert(0.5 * em, gui.Margins(margin))

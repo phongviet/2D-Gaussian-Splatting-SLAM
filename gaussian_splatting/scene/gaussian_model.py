@@ -284,6 +284,22 @@ class GaussianModel:
         ]
 
         self.optimizer = torch.optim.Adam(l, lr=0.0, eps=1e-15)
+        self.use_sparse_adam = bool(
+            self.config.get("Training", {}).get("sparse_adam", {}).get("enabled", False)
+        ) if self.config else False
+        self.sparse_adam_visible_only = bool(
+            self.config.get("Training", {}).get("sparse_adam", {}).get("visible_only", True)
+        ) if self.config else True
+        self.xyz_scheduler_args = get_expon_lr_func(
+            lr_init=training_args.position_lr_init * self.spatial_lr_scale,
+            lr_final=training_args.position_lr_final * self.spatial_lr_scale,
+            lr_delay_mult=training_args.position_lr_delay_mult,
+            max_steps=training_args.position_lr_max_steps,
+        )
+        self.lr_init = training_args.position_lr_init * self.spatial_lr_scale
+        self.lr_final = training_args.position_lr_final * self.spatial_lr_scale
+        self.lr_delay_mult = training_args.position_lr_delay_mult
+        self.max_steps = training_args.position_lr_max_steps
         self.xyz_scheduler_args = get_expon_lr_func(
             lr_init=training_args.position_lr_init * self.spatial_lr_scale,
             lr_final=training_args.position_lr_final * self.spatial_lr_scale,
@@ -291,10 +307,32 @@ class GaussianModel:
             max_steps=training_args.position_lr_max_steps,
         )
 
-        self.lr_init = training_args.position_lr_init * self.spatial_lr_scale
-        self.lr_final = training_args.position_lr_final * self.spatial_lr_scale
-        self.lr_delay_mult = training_args.position_lr_delay_mult
-        self.max_steps = training_args.position_lr_max_steps
+    def step_optimizer_sparse(self, visibility_filters):
+        """Step optimizer with sparse gradient updates (only visible Gaussians).
+
+        Used when sparse_adam.enabled is True. Instead of calling optimizer.step()
+        which updates ALL Gaussians, this selectively zeros gradients for Gaussians
+        that were not visible in any current-view rendering.
+        """
+        if not self.use_sparse_adam:
+            self.optimizer.step()
+            self.optimizer.zero_grad(set_to_none=True)
+            return
+
+        combined_mask = torch.zeros(self.get_xyz.shape[0], dtype=torch.bool, device="cuda")
+        for vf in visibility_filters:
+            combined_mask |= vf
+
+        if self.sparse_adam_visible_only and combined_mask.sum() < self.get_xyz.shape[0]:
+            for group in self.optimizer.param_groups:
+                for param in group["params"]:
+                    if param.grad is not None:
+                        grad_clone = param.grad.clone()
+                        grad_clone[~combined_mask] = 0.0
+                        param.grad = grad_clone
+
+        self.optimizer.step()
+        self.optimizer.zero_grad(set_to_none=True)
 
     def update_learning_rate(self, iteration):
         """Learning rate scheduling per step"""
@@ -602,9 +640,8 @@ class GaussianModel:
         if new_n_obs is not None:
             self.n_obs = torch.cat((self.n_obs, new_n_obs)).int()
 
-    def densify_and_split(self, grads, grad_threshold, scene_extent, N=2):
+    def densify_and_split(self, grads, grad_threshold, scene_extent, N=2, max_densify=0):
         n_init_points = self.get_xyz.shape[0]
-        # Extract points that satisfy the gradient condition
         padded_grad = torch.zeros((n_init_points), device="cuda")
         padded_grad[: grads.shape[0]] = grads.squeeze()
         selected_pts_mask = torch.where(padded_grad >= grad_threshold, True, False)
@@ -613,6 +650,13 @@ class GaussianModel:
             torch.max(self.get_scaling, dim=1).values
             > self.percent_dense * scene_extent,
         )
+
+        n_selected = selected_pts_mask.sum().item()
+        if max_densify > 0 and n_selected > max_densify:
+            selected_idx = torch.where(selected_pts_mask)[0]
+            keep_idx = selected_idx[torch.randperm(n_selected)[:max_densify]]
+            selected_pts_mask = torch.zeros(n_init_points, dtype=torch.bool, device="cuda")
+            selected_pts_mask[keep_idx] = True
 
         stds = self.get_scaling[selected_pts_mask].repeat(N, 1)
         padded_stds = torch.cat([stds, torch.zeros_like(stds[:, :1])], dim=-1)
@@ -653,8 +697,7 @@ class GaussianModel:
 
         self.prune_points(prune_filter)
 
-    def densify_and_clone(self, grads, grad_threshold, scene_extent):
-        # Extract points that satisfy the gradient condition
+    def densify_and_clone(self, grads, grad_threshold, scene_extent, max_densify=0):
         selected_pts_mask = torch.where(
             torch.norm(grads, dim=-1) >= grad_threshold, True, False
         )
@@ -663,6 +706,13 @@ class GaussianModel:
             torch.max(self.get_scaling, dim=1).values
             <= self.percent_dense * scene_extent,
         )
+
+        n_selected = selected_pts_mask.sum().item()
+        if max_densify > 0 and n_selected > max_densify:
+            selected_idx = torch.where(selected_pts_mask)[0]
+            keep_idx = selected_idx[torch.randperm(n_selected)[:max_densify]]
+            selected_pts_mask = torch.zeros(self.get_xyz.shape[0], dtype=torch.bool, device="cuda")
+            selected_pts_mask[keep_idx] = True
 
         new_xyz = self._xyz[selected_pts_mask]
         new_features_dc = self._features_dc[selected_pts_mask]
@@ -684,12 +734,13 @@ class GaussianModel:
             new_n_obs=new_n_obs,
         )
 
-    def densify_and_prune(self, max_grad, min_opacity, extent, max_screen_size):
+    def densify_and_prune(self, max_grad, min_opacity, extent, max_screen_size,
+                          max_densify=0, max_total=0):
         grads = self.xyz_gradient_accum / self.denom
         grads[grads.isnan()] = 0.0
 
-        self.densify_and_clone(grads, max_grad, extent)
-        self.densify_and_split(grads, max_grad, extent)
+        self.densify_and_clone(grads, max_grad, extent, max_densify=max_densify)
+        self.densify_and_split(grads, max_grad, extent, max_densify=max_densify)
 
         prune_mask = (self.get_opacity < min_opacity).squeeze()
         if max_screen_size:
@@ -700,6 +751,25 @@ class GaussianModel:
                 torch.logical_or(prune_mask, big_points_vs), big_points_ws
             )
         self.prune_points(prune_mask)
+
+        if max_total > 0 and self.get_xyz.shape[0] > max_total:
+            excess = self.get_xyz.shape[0] - max_total
+            prune_idx = torch.randperm(self.get_xyz.shape[0])[:excess]
+            excess_mask = torch.zeros(self.get_xyz.shape[0], dtype=torch.bool, device="cuda")
+            excess_mask[prune_idx] = True
+            self.prune_points(excess_mask)
+
+    def densify_clone_only(self, grad_threshold, scene_extent, max_densify=0):
+        """Run only densify_and_clone (no splitting). Useful for ablation experiments."""
+        grads = self.xyz_gradient_accum / self.denom
+        grads[grads.isnan()] = 0.0
+        self.densify_and_clone(grads, grad_threshold, scene_extent, max_densify=max_densify)
+
+    def densify_split_only(self, grad_threshold, scene_extent, max_densify=0):
+        """Run only densify_and_split (no cloning). Useful for ablation experiments."""
+        grads = self.xyz_gradient_accum / self.denom
+        grads[grads.isnan()] = 0.0
+        self.densify_and_split(grads, grad_threshold, scene_extent, max_densify=max_densify)
 
     def add_densification_stats(self, viewspace_point_tensor, update_filter):
         self.xyz_gradient_accum[update_filter] += torch.norm(
