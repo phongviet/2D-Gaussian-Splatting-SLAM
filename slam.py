@@ -102,6 +102,12 @@ class SLAM:
 
         backend_process = mp.Process(target=self.backend.run)
         if self.use_gui:
+            # Open3D's Filament backend segfaults (SIGSEGV) when running in a
+            # mp.spawn child process under native Wayland.  Force XWayland via
+            # the X11 display so the GUI process survives.
+            if os.environ.get("WAYLAND_DISPLAY"):
+                os.environ.pop("WAYLAND_DISPLAY", None)
+                os.environ["XDG_SESSION_TYPE"] = "x11"
             gui_process = mp.Process(target=slam_gui.run, args=(self.params_gui,))
             gui_process.start()
             time.sleep(5)
@@ -131,6 +137,7 @@ class SLAM:
                 final=True,
                 monocular=self.monocular,
                 gaussian_count=gaussian_count,
+                total_fps=FPS,
             )
 
             rendering_result = eval_rendering(

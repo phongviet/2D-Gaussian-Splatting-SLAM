@@ -62,7 +62,7 @@ def fixed_traj_colormap(ax, traj, array, plot_mode, min_map, max_map, title=""):
         plt.title(title)
 
 
-def evaluate_evo(poses_gt, poses_est, plot_dir, label, monocular=False, gaussian_count=None):
+def evaluate_evo(poses_gt, poses_est, plot_dir, label, monocular=False, gaussian_count=None, total_fps=None):
     ## Plot
     traj_ref = PosePath3D(poses_se3=poses_gt)
     traj_est = PosePath3D(poses_se3=poses_est)
@@ -77,7 +77,9 @@ def evaluate_evo(poses_gt, poses_est, plot_dir, label, monocular=False, gaussian
     ape_metric.process_data(data)
     ape_stat = ape_metric.get_statistic(metrics.StatisticsType.rmse)
     ape_stats = ape_metric.get_all_statistics()
-    if gaussian_count is not None:
+    if gaussian_count is not None and total_fps is not None:
+        Log(f"RMSE ATE  ({gaussian_count} gaussians, {total_fps:.3f} fps)", ape_stat, tag="Eval")
+    elif gaussian_count is not None:
         Log(f"RMSE ATE [m] ({gaussian_count} gaussians)", ape_stat, tag="Eval")
     else:
         Log("RMSE ATE [m]", ape_stat, tag="Eval")
@@ -108,7 +110,7 @@ def evaluate_evo(poses_gt, poses_est, plot_dir, label, monocular=False, gaussian
     return ape_stat
 
 
-def eval_ate(frames, kf_ids, save_dir, iterations, final=False, monocular=False, gaussian_count=None):
+def eval_ate(frames, kf_ids, save_dir, iterations, final=False, monocular=False, gaussian_count=None, total_fps=None):
     trj_data = dict()
     latest_frame_idx = kf_ids[-1] + 2 if final else kf_ids[-1] + 1
     trj_id, trj_est, trj_gt = [], [], []
@@ -152,6 +154,7 @@ def eval_ate(frames, kf_ids, save_dir, iterations, final=False, monocular=False,
         label=label_evo,
         monocular=monocular,
         gaussian_count=gaussian_count,
+        total_fps=total_fps,
     )
     wandb.log({"frame_idx": latest_frame_idx, "ate": ate})
     return ate
@@ -179,7 +182,8 @@ def eval_rendering(
             continue
         saved_frame_idx.append(idx)
         frame = frames[idx]
-        gt_image, _, gt_depth = dataset[idx]
+        gt_image, gt_depth, _ = dataset[idx]
+
 
         render_result = render(frame, gaussians, pipe, background)
         rendering = render_result["render"]
@@ -207,15 +211,19 @@ def eval_rendering(
 
         gt_d = None
         if gt_depth is not None:
-            if hasattr(gt_depth, "numpy"):
-                gt_d = gt_depth.cpu().numpy()[0]
-            elif hasattr(gt_depth[0], "cpu"):
-                gt_d = gt_depth[0].cpu().numpy()
+            if hasattr(gt_depth, "cpu"):
+                gt_d = gt_depth.detach().cpu().numpy()
             else:
-                gt_d = gt_depth[0]
+                gt_d = np.array(gt_depth)
+            
+            if gt_d.ndim == 3:
+                gt_d = gt_d[0]
+            elif gt_d.ndim > 3:
+                gt_d = gt_d.squeeze()
         if gt_d is not None:
             pred_d = depth[0, :, :].detach().cpu().numpy()
             valid_mask = gt_d > 0.01
+
             if valid_mask.sum() > 0:
                 depth_l1 = np.abs(pred_d[valid_mask] - gt_d[valid_mask]).mean()
                 depth_l1_array.append(depth_l1)
