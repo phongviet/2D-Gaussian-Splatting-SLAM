@@ -322,6 +322,7 @@ class FrontEnd(mp.Process):
     def run(self):
         self.background = self.background.cuda()
         cur_frame_idx = 0
+        self.start_time = time.time()
         projection_matrix = getProjectionMatrix2(
             znear=0.01,
             zfar=100.0,
@@ -361,6 +362,7 @@ class FrontEnd(mp.Process):
                             final=True,
                             monocular=self.monocular,
                             gaussian_count=self.gaussians.get_xyz.shape[0] if self.gaussians is not None else None,
+                            total_fps=cur_frame_idx / (time.time() - self.start_time) if (time.time() - self.start_time) > 0 else 0,
                         )
                         save_gaussians(
                             self.gaussians, self.save_dir, "final", final=True
@@ -481,6 +483,7 @@ class FrontEnd(mp.Process):
                         cur_frame_idx,
                         monocular=self.monocular,
                         gaussian_count=self.gaussians.get_xyz.shape[0] if self.gaussians is not None else None,
+                        total_fps=cur_frame_idx / (time.time() - self.start_time) if (time.time() - self.start_time) > 0 else 0,
                     )
                 toc.record()
                 torch.cuda.synchronize()

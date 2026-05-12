@@ -92,3 +92,23 @@ model_params:
 pipeline_params:
   convert_SHs_python: False
   compute_cov3D_python: False
+
+# =============================================================================
+# EXPERIMENTAL FEATURES
+# All features are disabled by default (False/None). Toggle as needed.
+# =============================================================================
+
+  # -------------------------------------------------------------------------
+  # Experiment: Densification-Only SLAM
+  # Disables Gaussian insertion from new keyframes; relies on densification
+  # to grow existing Gaussians. Useful for studying densification behavior.
+  # -------------------------------------------------------------------------
+  densification_exp:
+    enabled: False             # Master toggle for this experiment group
+    insert_gaussians: True   # If False, skip extend_from_pcd_seq on new KFs
+    densify_every_frame: False # If True, run densify_and_prune every map() call
+    gradient_threshold: 0.0002 # Overrides opt_params.densify_grad_threshold when set
+    clone_only: False          # Run only densify_and_clone (no splitting)
+    split_only: False          # Run only densify_and_split  (no cloning)
+    max_densify_per_step: 0   # Cap new Gaussians per densify call (0 = no cap)
+    max_total_gaussians: 0   # Hard cap on total Gaussian count (0 = no cap)

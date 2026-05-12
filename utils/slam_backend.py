@@ -66,6 +66,10 @@ class BackEnd(mp.Process):
         )
 
     def add_next_kf(self, frame_idx, viewpoint, init=False, scale=2.0, depth_map=None):
+        dens_exp = self.config["Training"].get("densification_exp", {})
+        insert_enabled = dens_exp.get("insert_gaussians", True)
+        if not insert_enabled:
+            return
         self.gaussians.extend_from_pcd_seq(
             viewpoint, kf_id=frame_idx, init=init, scale=scale, depthmap=depth_map
         )
@@ -291,13 +295,37 @@ class BackEnd(mp.Process):
                     self.iteration_count % self.gaussian_update_every
                     == self.gaussian_update_offset
                 )
+
+                dens_exp = self.config["Training"].get("densification_exp", {})
+
+                # Determine which densification method to call
+                def call_densify(grad_threshold, opacity_th, extent, screen_size):
+                    if dens_exp.get("clone_only", False):
+                        self.gaussians.densify_clone_only(grad_threshold, extent)
+                    elif dens_exp.get("split_only", False):
+                        self.gaussians.densify_split_only(grad_threshold, extent)
+                    else:
+                        self.gaussians.densify_and_prune(
+                            grad_threshold, opacity_th, extent, screen_size,
+                            max_densify=dens_exp.get("max_densify_per_step", 0),
+                            max_total=dens_exp.get("max_total_gaussians", 0),
+                        )
+
                 if update_gaussian:
-                    self.gaussians.densify_and_prune(
+                    call_densify(
                         self.opt_params.densify_grad_threshold,
                         self.gaussian_th,
                         self.gaussian_extent,
                         self.size_threshold,
                     )
+                    gaussian_split = True
+
+                # Per-frame densification experiment
+                if dens_exp.get("enabled") and dens_exp.get("densify_every_frame"):
+                    grad_thresh = dens_exp.get(
+                        "gradient_threshold", self.opt_params.densify_grad_threshold
+                    )
+                    call_densify(grad_thresh, self.gaussian_th, self.gaussian_extent, self.size_threshold)
                     gaussian_split = True
 
                 ## Opacity reset
@@ -428,7 +456,7 @@ class BackEnd(mp.Process):
 
                     opt_params = []
                     frames_to_optimize = self.config["Training"]["pose_window"]
-                    iter_per_kf = self.mapping_itr_num if self.single_thread else 10
+                    iter_per_kf = self.mapping_itr_num if self.single_thread else 20
                     if not self.initialized:
                         if (
                             len(self.current_window)

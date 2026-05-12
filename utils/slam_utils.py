@@ -1,4 +1,5 @@
 import torch
+import torch.nn.functional as F
 
 
 def image_gradient(image):
@@ -93,20 +94,25 @@ def get_loss_tracking_rgbd(
     return alpha * l1_rgb + (1 - alpha) * l1_depth.mean()
 
 
-def get_loss_mapping(config, image, depth, viewpoint, opacity, initialization=False, render_pkg=None, iteration=0, total_iterations=1):
+def get_loss_mapping(config, image, depth, viewpoint, opacity, initialization=False, render_pkg=None, iteration=0, total_iterations=1, render_scale=1.0):
     if initialization:
         image_ab = image
     else:
         image_ab = (torch.exp(viewpoint.exposure_a)) * image + viewpoint.exposure_b
     if config["Training"]["monocular"]:
-        return get_loss_mapping_rgb(config, image_ab, depth, viewpoint, render_pkg=render_pkg, iteration=iteration, total_iterations=total_iterations)
-    return get_loss_mapping_rgbd(config, image_ab, depth, viewpoint, render_pkg=render_pkg, iteration=iteration, total_iterations=total_iterations)
+        return get_loss_mapping_rgb(config, image_ab, depth, viewpoint, render_pkg=render_pkg, iteration=iteration, total_iterations=total_iterations, render_scale=render_scale)
+    return get_loss_mapping_rgbd(config, image_ab, depth, viewpoint, render_pkg=render_pkg, iteration=iteration, total_iterations=total_iterations, render_scale=render_scale)
 
 
-def get_loss_mapping_rgb(config, image, depth, viewpoint, render_pkg=None, iteration=0, total_iterations=1):
+def get_loss_mapping_rgb(config, image, depth, viewpoint, render_pkg=None, iteration=0, total_iterations=1, render_scale=1.0):
     gt_image = viewpoint.original_image.cuda()
     _, h, w = gt_image.shape
-    mask_shape = (1, h, w)
+    if render_scale > 1.0:
+        gt_image = F.interpolate(gt_image.unsqueeze(0), scale_factor=1.0/render_scale,
+                                 mode="bilinear", recompute_scale_factor=True, antialias=True)[0]
+        image = F.interpolate(image.unsqueeze(0), scale_factor=1.0/render_scale,
+                              mode="bilinear", recompute_scale_factor=True, antialias=True)[0]
+    mask_shape = (1, gt_image.shape[1], gt_image.shape[2])
     rgb_boundary_threshold = config["Training"]["rgb_boundary_threshold"]
 
     rgb_pixel_mask = (gt_image.sum(dim=0) > rgb_boundary_threshold).view(*mask_shape)
@@ -136,15 +142,23 @@ def get_loss_mapping_rgb(config, image, depth, viewpoint, render_pkg=None, itera
     return loss
 
 
-def get_loss_mapping_rgbd(config, image, depth, viewpoint, initialization=False, render_pkg=None, iteration=0, total_iterations=1):
+def get_loss_mapping_rgbd(config, image, depth, viewpoint, initialization=False, render_pkg=None, iteration=0, total_iterations=1, render_scale=1.0):
     alpha = config["Training"]["alpha"] if "alpha" in config["Training"] else 0.95
     rgb_boundary_threshold = config["Training"]["rgb_boundary_threshold"]
 
     gt_image = viewpoint.original_image.cuda()
+    if render_scale > 1.0:
+        gt_image = F.interpolate(gt_image.unsqueeze(0), scale_factor=1.0/render_scale,
+                                 mode="bilinear", recompute_scale_factor=True, antialias=True)[0]
+        image = F.interpolate(image.unsqueeze(0), scale_factor=1.0/render_scale,
+                             mode="bilinear", recompute_scale_factor=True, antialias=True)[0]
 
     gt_depth = torch.from_numpy(viewpoint.depth).to(
         dtype=torch.float32, device=image.device
     )[None]
+    if render_scale > 1.0:
+        gt_depth = F.interpolate(gt_depth.unsqueeze(0).float(), scale_factor=1.0/render_scale,
+                                mode="nearest")[0]
     rgb_pixel_mask = (gt_image.sum(dim=0) > rgb_boundary_threshold).view(*depth.shape)
     depth_pixel_mask = (gt_depth > 0.01).view(*depth.shape)
 
