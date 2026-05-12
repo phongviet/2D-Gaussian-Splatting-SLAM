@@ -91,16 +91,6 @@ class BackEnd(mp.Process):
     def initialize_map(self, cur_frame_idx, viewpoint):
         for mapping_iteration in range(self.init_itr_num):
             self.iteration_count += 1
-
-            # Progressive resolution scheduling during init
-            res_cfg = self.config["Training"].get("resolution_schedule", {})
-            render_scale = 1.0
-            if res_cfg.get("enabled"):
-                start_factor = res_cfg.get("start_factor", 0.5)
-                ramp_up_iters = res_cfg.get("ramp_up_iters", 500)
-                frac = min(1.0, self.iteration_count / max(1, ramp_up_iters))
-                render_scale = start_factor + (1.0 - start_factor) * frac
-
             render_pkg = render(
                 viewpoint, self.gaussians, self.pipeline_params, self.background
             )
@@ -123,7 +113,7 @@ class BackEnd(mp.Process):
             )
             loss_init = get_loss_mapping(
                 self.config, image, depth, viewpoint, opacity, initialization=True, render_pkg=render_pkg,
-                iteration=mapping_iteration, total_iterations=self.init_itr_num, render_scale=1.0 / render_scale
+                iteration=mapping_iteration, total_iterations=self.init_itr_num
             )
             loss_init.backward()
 
@@ -142,29 +132,14 @@ class BackEnd(mp.Process):
                         self.init_gaussian_extent,
                         None,
                     )
-                    # Budget enforcement during init
-                    budget_cfg = self.config["Training"].get("densification_budget", {})
-                    if budget_cfg.get("enabled"):
-                        max_gauss = int(budget_cfg.get("max_gaussians", 100000))
-                        current_count = self.gaussians.get_xyz.shape[0]
-                        if current_count > max_gauss:
-                            excess = current_count - max_gauss
-                            opacities = self.gaussians.get_opacity.squeeze()
-                            prune_idx = torch.argsort(opacities)[:excess]
-                            prune_mask = torch.zeros(current_count, dtype=torch.bool, device="cuda")
-                            prune_mask[prune_idx] = True
-                            self.gaussians.prune_points(prune_mask)
 
                 if self.iteration_count == self.init_gaussian_reset or (
                     self.iteration_count == self.opt_params.densify_from_iter
                 ):
                     self.gaussians.reset_opacity()
 
-                if self.gaussians.use_sparse_adam:
-                    self.gaussians.step_optimizer_sparse([visibility_filter])
-                else:
-                    self.gaussians.optimizer.step()
-                    self.gaussians.optimizer.zero_grad(set_to_none=True)
+                self.gaussians.optimizer.step()
+                self.gaussians.optimizer.zero_grad(set_to_none=True)
 
         self.occ_aware_visibility[cur_frame_idx] = (n_touched > 0).long()
         Log("Initialized map")
@@ -187,15 +162,6 @@ class BackEnd(mp.Process):
         for iter_idx in range(iters):
             self.iteration_count += 1
             self.last_sent += 1
-
-            # Progressive resolution scheduling (DashGaussian-inspired)
-            res_cfg = self.config["Training"].get("resolution_schedule", {})
-            render_scale = 1.0
-            if res_cfg.get("enabled"):
-                start_factor = res_cfg.get("start_factor", 0.5)
-                ramp_up_iters = res_cfg.get("ramp_up_iters", 500)
-                frac = min(1.0, self.iteration_count / max(1, ramp_up_iters))
-                render_scale = start_factor + (1.0 - start_factor) * frac
 
             loss_mapping = 0
             viewspace_point_tensor_acm = []
@@ -231,7 +197,7 @@ class BackEnd(mp.Process):
 
                 loss_mapping += get_loss_mapping(
                     self.config, image, depth, viewpoint, opacity, render_pkg=render_pkg,
-                    iteration=iter_idx, total_iterations=iters, render_scale=1.0 / render_scale
+                    iteration=iter_idx, total_iterations=iters
                 )
                 viewspace_point_tensor_acm.append(viewspace_point_tensor)
                 visibility_filter_acm.append(visibility_filter)
@@ -262,7 +228,7 @@ class BackEnd(mp.Process):
                 )
                 loss_mapping += get_loss_mapping(
                     self.config, image, depth, viewpoint, opacity, render_pkg=render_pkg,
-                    iteration=iter_idx, total_iterations=iters, render_scale=1.0 / render_scale
+                    iteration=iter_idx, total_iterations=iters
                 )
                 viewspace_point_tensor_acm.append(viewspace_point_tensor)
                 visibility_filter_acm.append(visibility_filter)
@@ -331,7 +297,6 @@ class BackEnd(mp.Process):
                 )
 
                 dens_exp = self.config["Training"].get("densification_exp", {})
-                early_prune_cfg = self.config["Training"].get("early_pruning", {})
 
                 # Determine which densification method to call
                 def call_densify(grad_threshold, opacity_th, extent, screen_size):
@@ -360,28 +325,8 @@ class BackEnd(mp.Process):
                     grad_thresh = dens_exp.get(
                         "gradient_threshold", self.opt_params.densify_grad_threshold
                     )
-                    # Annealed opacity threshold for early pruning experiment
-                    opacity_th = self.gaussian_th
-                    if early_prune_cfg.get("enabled"):
-                        frac = min(1.0, self.iteration_count / max(1, early_prune_cfg.get("anneal_iters", 5000)))
-                        opacity_th = early_prune_cfg.get("opacity_threshold_init", 0.005) * (1 - frac) + \
-                                    early_prune_cfg.get("opacity_threshold_final", 0.7) * frac
-                    call_densify(grad_thresh, opacity_th, self.gaussian_extent, self.size_threshold)
+                    call_densify(grad_thresh, self.gaussian_th, self.gaussian_extent, self.size_threshold)
                     gaussian_split = True
-
-                # Global Gaussian budget enforcement (Mini-Splatting-inspired)
-                budget_cfg = self.config["Training"].get("densification_budget", {})
-                if budget_cfg.get("enabled"):
-                    max_gauss = int(budget_cfg.get("max_gaussians", 100000))
-                    current_count = self.gaussians.get_xyz.shape[0]
-                    if current_count > max_gauss:
-                        excess = current_count - max_gauss
-                        opacities = self.gaussians.get_opacity.squeeze()
-                        prune_idx = torch.argsort(opacities)[:excess]
-                        prune_mask = torch.zeros(current_count, dtype=torch.bool, device="cuda")
-                        prune_mask[prune_idx] = True
-                        self.gaussians.prune_points(prune_mask)
-                        Log(f"Budget cap: pruned {excess}, now {self.gaussians.get_xyz.shape[0]}")
 
                 ## Opacity reset
                 if (self.iteration_count % self.gaussian_reset) == 0 and (
@@ -391,11 +336,8 @@ class BackEnd(mp.Process):
                     self.gaussians.reset_opacity_nonvisible(visibility_filter_acm)
                     gaussian_split = True
 
-                if self.gaussians.use_sparse_adam:
-                    self.gaussians.step_optimizer_sparse(visibility_filter_acm)
-                else:
-                    self.gaussians.optimizer.step()
-                    self.gaussians.optimizer.zero_grad(set_to_none=True)
+                self.gaussians.optimizer.step()
+                self.gaussians.optimizer.zero_grad(set_to_none=True)
                 self.gaussians.update_learning_rate(self.iteration_count)
                 self.keyframe_optimizers.step()
                 self.keyframe_optimizers.zero_grad(set_to_none=True)
@@ -437,11 +379,8 @@ class BackEnd(mp.Process):
                     self.gaussians.max_radii2D[visibility_filter],
                     radii[visibility_filter],
                 )
-                if self.gaussians.use_sparse_adam:
-                    self.gaussians.step_optimizer_sparse([visibility_filter])
-                else:
-                    self.gaussians.optimizer.step()
-                    self.gaussians.optimizer.zero_grad(set_to_none=True)
+                self.gaussians.optimizer.step()
+                self.gaussians.optimizer.zero_grad(set_to_none=True)
                 self.gaussians.update_learning_rate(iteration)
         Log("Map refinement done")
 
@@ -517,7 +456,7 @@ class BackEnd(mp.Process):
 
                     opt_params = []
                     frames_to_optimize = self.config["Training"]["pose_window"]
-                    iter_per_kf = self.mapping_itr_num if self.single_thread else 10
+                    iter_per_kf = self.mapping_itr_num if self.single_thread else 20
                     if not self.initialized:
                         if (
                             len(self.current_window)

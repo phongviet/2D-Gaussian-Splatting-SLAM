@@ -284,12 +284,6 @@ class GaussianModel:
         ]
 
         self.optimizer = torch.optim.Adam(l, lr=0.0, eps=1e-15)
-        self.use_sparse_adam = bool(
-            self.config.get("Training", {}).get("sparse_adam", {}).get("enabled", False)
-        ) if self.config else False
-        self.sparse_adam_visible_only = bool(
-            self.config.get("Training", {}).get("sparse_adam", {}).get("visible_only", True)
-        ) if self.config else True
         self.xyz_scheduler_args = get_expon_lr_func(
             lr_init=training_args.position_lr_init * self.spatial_lr_scale,
             lr_final=training_args.position_lr_final * self.spatial_lr_scale,
@@ -300,39 +294,6 @@ class GaussianModel:
         self.lr_final = training_args.position_lr_final * self.spatial_lr_scale
         self.lr_delay_mult = training_args.position_lr_delay_mult
         self.max_steps = training_args.position_lr_max_steps
-        self.xyz_scheduler_args = get_expon_lr_func(
-            lr_init=training_args.position_lr_init * self.spatial_lr_scale,
-            lr_final=training_args.position_lr_final * self.spatial_lr_scale,
-            lr_delay_mult=training_args.position_lr_delay_mult,
-            max_steps=training_args.position_lr_max_steps,
-        )
-
-    def step_optimizer_sparse(self, visibility_filters):
-        """Step optimizer with sparse gradient updates (only visible Gaussians).
-
-        Used when sparse_adam.enabled is True. Instead of calling optimizer.step()
-        which updates ALL Gaussians, this selectively zeros gradients for Gaussians
-        that were not visible in any current-view rendering.
-        """
-        if not self.use_sparse_adam:
-            self.optimizer.step()
-            self.optimizer.zero_grad(set_to_none=True)
-            return
-
-        combined_mask = torch.zeros(self.get_xyz.shape[0], dtype=torch.bool, device="cuda")
-        for vf in visibility_filters:
-            combined_mask |= vf
-
-        if self.sparse_adam_visible_only and combined_mask.sum() < self.get_xyz.shape[0]:
-            for group in self.optimizer.param_groups:
-                for param in group["params"]:
-                    if param.grad is not None:
-                        grad_clone = param.grad.clone()
-                        grad_clone[~combined_mask] = 0.0
-                        param.grad = grad_clone
-
-        self.optimizer.step()
-        self.optimizer.zero_grad(set_to_none=True)
 
     def update_learning_rate(self, iteration):
         """Learning rate scheduling per step"""
