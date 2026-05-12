@@ -291,3 +291,47 @@ def save_gaussians(gaussians, name, iteration, final=False):
             name, "point_cloud/iteration_{}".format(str(iteration))
         )
     gaussians.save_ply(os.path.join(point_cloud_path, "point_cloud.ply"))
+
+
+def save_metrics_graphs(save_dir, gaussian_counts, fps_history, wall_times=None):
+    """
+    Save Gaussian count and FPS time-series as JSON and PNG graph.
+    """
+    if save_dir is None or not gaussian_counts or not fps_history:
+        return
+
+    frame_indices = list(range(len(gaussian_counts)))
+    wall_times_s = wall_times if wall_times is not None else []
+
+    # Save raw time-series JSON
+    time_series_data = {
+        "frame_indices": frame_indices,
+        "gaussian_counts": [int(x) for x in gaussian_counts],
+        "fps": [round(x, 4) for x in fps_history],
+        "wall_times_s": [round(x, 4) for x in wall_times_s],
+    }
+    time_series_path = os.path.join(save_dir, "metrics_time_series.json")
+    with open(time_series_path, "w", encoding="utf-8") as f:
+        json.dump(time_series_data, f, indent=4)
+    Log(f"Saved metrics time-series to {time_series_path}", tag="Eval")
+
+    # Generate PNG graph with two subplots
+    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 8))
+
+    ax1.plot(frame_indices, gaussian_counts, color="#2196F3", linewidth=1.5)
+    ax1.set_xlabel("Frame Index")
+    ax1.set_ylabel("Gaussian Count")
+    ax1.set_title("Gaussian Count over Time")
+    ax1.grid(True, alpha=0.3)
+
+    ax2.plot(frame_indices, fps_history, color="#4CAF50", linewidth=1.5)
+    ax2.set_xlabel("Frame Index")
+    ax2.set_ylabel("FPS")
+    ax2.set_title("FPS over Time")
+    ax2.grid(True, alpha=0.3)
+
+    fig.tight_layout()
+    graph_path = os.path.join(save_dir, "metrics_graph.png")
+    plt.savefig(graph_path, dpi=150)
+    plt.close(fig)
+    Log(f"Saved metrics graph to {graph_path}", tag="Eval")

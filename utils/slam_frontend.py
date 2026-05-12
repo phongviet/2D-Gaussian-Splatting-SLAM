@@ -44,6 +44,10 @@ class FrontEnd(mp.Process):
         self.device = "cuda:0"
         self.pause = False
 
+        self.gaussian_counts = []
+        self.fps_history = []
+        self.wall_times = []
+
     def set_hyperparams(self):
         self.save_dir = self.config["Results"]["save_dir"]
         self.save_results = self.config["Results"]["save_results"]
@@ -400,6 +404,12 @@ class FrontEnd(mp.Process):
 
                 # Tracking
                 render_pkg = self.tracking(cur_frame_idx, viewpoint)
+
+                if self.gaussians is not None:
+                    elapsed = time.time() - self.start_time
+                    self.gaussian_counts.append(self.gaussians.get_xyz.shape[0])
+                    self.fps_history.append(cur_frame_idx / elapsed if elapsed > 0 else 0)
+                    self.wall_times.append(elapsed)
 
                 current_window_dict = {}
                 current_window_dict[self.current_window[0]] = self.current_window[1:]
