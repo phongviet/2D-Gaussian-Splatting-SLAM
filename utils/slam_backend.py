@@ -456,7 +456,7 @@ class BackEnd(mp.Process):
 
                     opt_params = []
                     frames_to_optimize = self.config["Training"]["pose_window"]
-                    iter_per_kf = self.mapping_itr_num if self.single_thread else 20
+                    iter_per_kf = self.mapping_itr_num if self.single_thread else 10
                     if not self.initialized:
                         if (
                             len(self.current_window)
