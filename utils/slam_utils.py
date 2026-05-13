@@ -100,11 +100,11 @@ def get_loss_mapping(config, image, depth, viewpoint, opacity, initialization=Fa
     else:
         image_ab = (torch.exp(viewpoint.exposure_a)) * image + viewpoint.exposure_b
     if config["Training"]["monocular"]:
-        return get_loss_mapping_rgb(config, image_ab, depth, viewpoint, render_pkg=render_pkg, iteration=iteration, total_iterations=total_iterations, render_scale=render_scale)
-    return get_loss_mapping_rgbd(config, image_ab, depth, viewpoint, render_pkg=render_pkg, iteration=iteration, total_iterations=total_iterations, render_scale=render_scale)
+        return get_loss_mapping_rgb(config, image_ab, depth, viewpoint, render_pkg=render_pkg, iteration=iteration, total_iterations=total_iterations, render_scale=render_scale, initialization=initialization)
+    return get_loss_mapping_rgbd(config, image_ab, depth, viewpoint, render_pkg=render_pkg, iteration=iteration, total_iterations=total_iterations, render_scale=render_scale, initialization=initialization)
 
 
-def get_loss_mapping_rgb(config, image, depth, viewpoint, render_pkg=None, iteration=0, total_iterations=1, render_scale=1.0):
+def get_loss_mapping_rgb(config, image, depth, viewpoint, render_pkg=None, iteration=0, total_iterations=1, render_scale=1.0, initialization=False):
     gt_image = viewpoint.original_image.cuda()
     _, h, w = gt_image.shape
     if render_scale > 1.0:
@@ -119,7 +119,7 @@ def get_loss_mapping_rgb(config, image, depth, viewpoint, render_pkg=None, itera
     l1_rgb = torch.abs(image * rgb_pixel_mask - gt_image * rgb_pixel_mask)
     loss = l1_rgb.mean()
 
-    if render_pkg is not None:
+    if render_pkg is not None and not initialization:
         if "lambda_normal" in config["Training"] and config["Training"]["lambda_normal"] > 0:
             if iteration > total_iterations / 4:
                 rend_normal = render_pkg["rend_normal"]
@@ -170,7 +170,7 @@ def get_loss_mapping_rgbd(config, image, depth, viewpoint, initialization=False,
 
     loss = alpha * l1_rgb.mean() + (1 - alpha) * l1_depth.mean()
 
-    if render_pkg is not None:
+    if render_pkg is not None and not initialization:
         if "lambda_normal" in config["Training"] and config["Training"]["lambda_normal"] > 0:
             rend_normal = render_pkg["rend_normal"]
             
