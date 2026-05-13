@@ -68,7 +68,7 @@ class BackEnd(mp.Process):
     def add_next_kf(self, frame_idx, viewpoint, init=False, scale=2.0, depth_map=None):
         dens_exp = self.config["Training"].get("densification_exp", {})
         insert_enabled = dens_exp.get("insert_gaussians", True)
-        if not insert_enabled:
+        if not insert_enabled and not init:
             return
         self.gaussians.extend_from_pcd_seq(
             viewpoint, kf_id=frame_idx, init=init, scale=scale, depthmap=depth_map
