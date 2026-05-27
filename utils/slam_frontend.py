@@ -47,6 +47,8 @@ class FrontEnd(mp.Process):
         self.gaussian_counts = []
         self.fps_history = []
         self.wall_times = []
+        self.mapping_losses = []
+        self._latest_mapping_loss = 0.0
 
     def set_hyperparams(self):
         self.save_dir = self.config["Results"]["save_dir"]
@@ -310,6 +312,8 @@ class FrontEnd(mp.Process):
         self.gaussians = GaussianModel.from_dict(data[1])
         occ_aware_visibility = data[2]
         keyframes = data[3]
+        if len(data) > 4:
+            self._latest_mapping_loss = data[4]
         # Move occ_aware_visibility tensors back to CUDA (were sent as CPU from backend)
         self.occ_aware_visibility = {
             k: v.cuda() for k, v in occ_aware_visibility.items()
@@ -410,6 +414,7 @@ class FrontEnd(mp.Process):
                     self.gaussian_counts.append(self.gaussians.get_xyz.shape[0])
                     self.fps_history.append(cur_frame_idx / elapsed if elapsed > 0 else 0)
                     self.wall_times.append(elapsed)
+                    self.mapping_losses.append(self._latest_mapping_loss)
 
                 current_window_dict = {}
                 current_window_dict[self.current_window[0]] = self.current_window[1:]

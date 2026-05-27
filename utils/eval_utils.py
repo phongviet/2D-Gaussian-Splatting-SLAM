@@ -106,6 +106,7 @@ def evaluate_evo(poses_gt, poses_est, plot_dir, label, monocular=False, gaussian
     )
     ax.legend()
     plt.savefig(os.path.join(plot_dir, "evo_2dplot_{}.png".format(str(label))), dpi=90)
+    plt.close(fig)
 
     return ape_stat
 
@@ -293,9 +294,9 @@ def save_gaussians(gaussians, name, iteration, final=False):
     gaussians.save_ply(os.path.join(point_cloud_path, "point_cloud.ply"))
 
 
-def save_metrics_graphs(save_dir, gaussian_counts, fps_history, wall_times=None):
+def save_metrics_graphs(save_dir, gaussian_counts, fps_history, wall_times=None, mapping_losses=None):
     """
-    Save Gaussian count and FPS time-series as JSON and PNG graph.
+    Save Gaussian count, FPS, and mapping loss time-series as JSON and PNG graph.
     """
     if save_dir is None or not gaussian_counts or not fps_history:
         return
@@ -310,13 +311,22 @@ def save_metrics_graphs(save_dir, gaussian_counts, fps_history, wall_times=None)
         "fps": [round(x, 4) for x in fps_history],
         "wall_times_s": [round(x, 4) for x in wall_times_s],
     }
+    if mapping_losses is not None:
+        time_series_data["mapping_losses"] = [round(float(x), 6) for x in mapping_losses]
+
     time_series_path = os.path.join(save_dir, "metrics_time_series.json")
     with open(time_series_path, "w", encoding="utf-8") as f:
         json.dump(time_series_data, f, indent=4)
     Log(f"Saved metrics time-series to {time_series_path}", tag="Eval")
 
-    # Generate PNG graph with two subplots
-    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 8))
+    # Generate PNG graph
+    nplots = 3 if mapping_losses is not None else 2
+    fig, axes = plt.subplots(nplots, 1, figsize=(10, 4 * nplots))
+
+    if nplots == 2:
+        ax1, ax2 = axes
+    else:
+        ax1, ax2, ax3 = axes
 
     ax1.plot(frame_indices, gaussian_counts, color="#2196F3", linewidth=1.5)
     ax1.set_xlabel("Frame Index")
@@ -329,6 +339,13 @@ def save_metrics_graphs(save_dir, gaussian_counts, fps_history, wall_times=None)
     ax2.set_ylabel("FPS")
     ax2.set_title("FPS over Time")
     ax2.grid(True, alpha=0.3)
+
+    if mapping_losses is not None:
+        ax3.plot(frame_indices[:len(mapping_losses)], mapping_losses, color="#FF5722", linewidth=1.5)
+        ax3.set_xlabel("Frame Index")
+        ax3.set_ylabel("Mapping Loss")
+        ax3.set_title("Mapping Loss over Time")
+        ax3.grid(True, alpha=0.3)
 
     fig.tight_layout()
     graph_path = os.path.join(save_dir, "metrics_graph.png")

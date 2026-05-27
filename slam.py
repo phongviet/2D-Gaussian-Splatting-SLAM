@@ -130,7 +130,8 @@ class SLAM:
         export_graph = self.config["Results"].get("export_metrics_graph", True)
         if export_graph and gaussian_counts and fps_history:
             save_metrics_graphs(
-                self.save_dir, gaussian_counts, fps_history, wall_times
+                self.save_dir, gaussian_counts, fps_history, wall_times,
+                mapping_losses=self.frontend.mapping_losses
             )
 
         if self.eval_rendering:

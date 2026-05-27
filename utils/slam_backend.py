@@ -38,6 +38,10 @@ class BackEnd(mp.Process):
         self.current_window = []
         self.initialized = not self.monocular
         self.keyframe_optimizers = None
+        self.gaussian_lifecycle = {}
+        self.latest_kf_idx = 0
+        self.local_mapping_iters = 0
+        self.latest_mapping_loss = 0.0
 
     def set_hyperparams(self):
         self.save_results = self.config["Results"]["save_results"]
@@ -66,13 +70,16 @@ class BackEnd(mp.Process):
         )
 
     def add_next_kf(self, frame_idx, viewpoint, init=False, scale=2.0, depth_map=None):
-        dens_exp = self.config["Training"].get("densification_exp", {})
-        insert_enabled = dens_exp.get("insert_gaussians", True)
-        if not insert_enabled and not init:
-            return
+        self.latest_kf_idx = frame_idx
+        prev_next_id = self.gaussians._next_global_id
         self.gaussians.extend_from_pcd_seq(
             viewpoint, kf_id=frame_idx, init=init, scale=scale, depthmap=depth_map
         )
+        for gid in range(prev_next_id, self.gaussians._next_global_id):
+            self.gaussian_lifecycle[gid] = {
+                "keyframe_in": frame_idx,
+                "keyframe_out": None
+            }
 
     def reset(self):
         self.iteration_count = 0
@@ -81,6 +88,10 @@ class BackEnd(mp.Process):
         self.current_window = []
         self.initialized = not self.monocular
         self.keyframe_optimizers = None
+        self.gaussian_lifecycle = {}
+        self.latest_kf_idx = 0
+        self.local_mapping_iters = 0
+        self.latest_mapping_loss = 0.0
 
         # remove all gaussians
         self.gaussians.prune_points(self.gaussians.unique_kfIDs >= 0)
@@ -148,6 +159,14 @@ class BackEnd(mp.Process):
     def map(self, current_window, prune=False, iters=1):
         if len(current_window) == 0:
             return
+
+        self.local_mapping_iters += iters
+
+        # Early stopping state initialization
+        recent_losses = []
+        patience = 10
+        min_burn_in = 60
+        early_stopping_th = self.config["Training"].get("early_stopping_th", 0.0)
 
         viewpoint_stack = [self.viewpoints[kf_idx] for kf_idx in current_window]
         random_viewpoint_stack = []
@@ -238,6 +257,7 @@ class BackEnd(mp.Process):
             isotropic_loss = torch.abs(scaling - scaling.mean(dim=1).view(-1, 1))
             loss_mapping += 10 * isotropic_loss.mean()
             loss_mapping.backward()
+            self.latest_mapping_loss = loss_mapping.item()
             gaussian_split = False
             ## Deinsifying / Pruning Gaussians
             with torch.no_grad():
@@ -270,6 +290,12 @@ class BackEnd(mp.Process):
                                 self.gaussians.n_obs <= prune_coviz, mask
                             )
                         if to_prune is not None and self.monocular:
+                            pruned_gids = self.gaussians._global_ids[to_prune.cpu()]
+                            for gid in pruned_gids:
+                                gid_item = gid.item()
+                                if gid_item >= 0 and gid_item in self.gaussian_lifecycle:
+                                    if self.gaussian_lifecycle[gid_item]["keyframe_out"] is None:
+                                        self.gaussian_lifecycle[gid_item]["keyframe_out"] = self.latest_kf_idx
                             self.gaussians.prune_points(to_prune.cuda())
                             for idx in range((len(current_window))):
                                 current_idx = current_window[idx]
@@ -296,36 +322,13 @@ class BackEnd(mp.Process):
                     == self.gaussian_update_offset
                 )
 
-                dens_exp = self.config["Training"].get("densification_exp", {})
-
-                # Determine which densification method to call
-                def call_densify(grad_threshold, opacity_th, extent, screen_size):
-                    if dens_exp.get("clone_only", False):
-                        self.gaussians.densify_clone_only(grad_threshold, extent)
-                    elif dens_exp.get("split_only", False):
-                        self.gaussians.densify_split_only(grad_threshold, extent)
-                    else:
-                        self.gaussians.densify_and_prune(
-                            grad_threshold, opacity_th, extent, screen_size,
-                            max_densify=dens_exp.get("max_densify_per_step", 0),
-                            max_total=dens_exp.get("max_total_gaussians", 0),
-                        )
-
                 if update_gaussian:
-                    call_densify(
+                    self.gaussians.densify_and_prune(
                         self.opt_params.densify_grad_threshold,
                         self.gaussian_th,
                         self.gaussian_extent,
                         self.size_threshold,
                     )
-                    gaussian_split = True
-
-                # Per-frame densification experiment
-                if dens_exp.get("enabled") and dens_exp.get("densify_every_frame"):
-                    grad_thresh = dens_exp.get(
-                        "gradient_threshold", self.opt_params.densify_grad_threshold
-                    )
-                    call_densify(grad_thresh, self.gaussian_th, self.gaussian_extent, self.size_threshold)
                     gaussian_split = True
 
                 ## Opacity reset
@@ -347,6 +350,19 @@ class BackEnd(mp.Process):
                     if viewpoint.uid == 0:
                         continue
                     update_pose(viewpoint)
+
+                # --- Early stopping check ---
+                if early_stopping_th > 0.0:
+                    recent_losses.append(self.latest_mapping_loss)
+                    if len(recent_losses) > patience:
+                        recent_losses.pop(0)
+                    if iter_idx >= min_burn_in:
+                        loss_start = recent_losses[0]
+                        relative_decrease = (loss_start - self.latest_mapping_loss) / loss_start
+                        if relative_decrease < early_stopping_th:
+                            Log(f"Early stopping triggered at iteration {iter_idx} (rel_decrease: {relative_decrease:.6f} < threshold: {early_stopping_th:.6f})")
+                            self.local_mapping_iters -= (iters - (iter_idx + 1))
+                            break
         return gaussian_split
 
     def color_refinement(self):
@@ -398,7 +414,7 @@ class BackEnd(mp.Process):
             k: v.cpu() for k, v in self.occ_aware_visibility.items()
         }
         # Serialize GaussianModel to CPU dict to avoid CUDA IPC issues across processes
-        msg = [tag, self.gaussians.to_dict(), occ_aware_visibility_cpu, keyframes]
+        msg = [tag, self.gaussians.to_dict(), occ_aware_visibility_cpu, keyframes, self.latest_mapping_loss]
         self.frontend_queue.put(msg)
 
     def run(self):
@@ -446,6 +462,8 @@ class BackEnd(mp.Process):
 
                 elif data[0] == "keyframe":
                     cur_frame_idx = data[1]
+                    Log(f"Received KF {cur_frame_idx}, backend ran {self.local_mapping_iters} mapping iters since last KF")
+                    self.local_mapping_iters = 0
                     viewpoint = Camera.from_dict(data[2])
                     current_window = data[3]
                     depth_map = data[4]
@@ -517,4 +535,14 @@ class BackEnd(mp.Process):
             self.backend_queue.get()
         while not self.frontend_queue.empty():
             self.frontend_queue.get()
+
+        import json
+        import os
+        save_dir = self.config["Results"]["save_dir"]
+        os.makedirs(save_dir, exist_ok=True)
+        save_path = os.path.join(save_dir, "gaussian_lifecycle.json")
+        with open(save_path, "w", encoding="utf-8") as f:
+            json.dump(self.gaussian_lifecycle, f, indent=4)
+        Log(f"Saved gaussian lifecycle to {save_path}")
+
         return
