@@ -49,6 +49,8 @@ class FrontEnd(mp.Process):
         self.wall_times = []
         self.mapping_losses = []
         self._latest_mapping_loss = 0.0
+        self.tracking_iters_history = []
+        self.tracking_iters_frame_indices = []
 
     def set_hyperparams(self):
         self.save_dir = self.config["Results"]["save_dir"]
@@ -120,6 +122,8 @@ class FrontEnd(mp.Process):
         self.iteration_count = 0
         self.occ_aware_visibility = {}
         self.current_window = []
+        self.tracking_iters_history = []
+        self.tracking_iters_frame_indices = []
         # remove everything from the queues
         while not self.backend_queue.empty():
             self.backend_queue.get()
@@ -167,6 +171,7 @@ class FrontEnd(mp.Process):
         )
 
         pose_optimizer = torch.optim.Adam(opt_params)
+        actual_itrs = self.tracking_itr_num
         for tracking_itr in range(self.tracking_itr_num):
             render_pkg = render(
                 viewpoint, self.gaussians, self.pipeline_params, self.background
@@ -197,7 +202,11 @@ class FrontEnd(mp.Process):
                     )
                 )
             if converged:
+                actual_itrs = tracking_itr + 1
                 break
+
+        self.tracking_iters_history.append(actual_itrs)
+        self.tracking_iters_frame_indices.append(cur_frame_idx)
 
         self.median_depth = get_median_depth(depth, opacity)
         return render_pkg
@@ -375,6 +384,36 @@ class FrontEnd(mp.Process):
                         save_gaussians(
                             self.gaussians, self.save_dir, "final", final=True
                         )
+                        
+                        # Save tracking iterations history
+                        import json
+                        import os
+                        os.makedirs(self.save_dir, exist_ok=True)
+                        iters_json_path = os.path.join(self.save_dir, "tracking_iterations.json")
+                        with open(iters_json_path, "w", encoding="utf-8") as f:
+                            json.dump({
+                                "frame_indices": self.tracking_iters_frame_indices,
+                                "iters": self.tracking_iters_history
+                            }, f, indent=4)
+                        Log(f"Saved tracking iterations history to {iters_json_path}")
+                        
+                        # Plot and save tracking iterations graph
+                        if self.tracking_iters_frame_indices:
+                            try:
+                                import matplotlib.pyplot as plt
+                                plt.figure(figsize=(10, 5))
+                                plt.plot(self.tracking_iters_frame_indices, self.tracking_iters_history, color='#1f77b4', linewidth=1.5)
+                                plt.title('Frontend Pose Tracking Iterations per Frame', fontsize=14, fontweight='bold', pad=15)
+                                plt.xlabel('Frame Index', fontsize=12, labelpad=10)
+                                plt.ylabel('Iterations', fontsize=12, labelpad=10)
+                                plt.grid(True, linestyle='--', alpha=0.6)
+                                plt.tight_layout()
+                                plot_path = os.path.join(self.save_dir, "tracking_iterations_graph.png")
+                                plt.savefig(plot_path, dpi=200)
+                                plt.close()
+                                Log(f"Saved tracking iterations graph to {plot_path}")
+                            except Exception as e:
+                                Log(f"Failed to plot tracking iterations graph: {str(e)}")
                     break
 
                 if self.requested_init:

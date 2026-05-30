@@ -42,6 +42,8 @@ class BackEnd(mp.Process):
         self.latest_kf_idx = 0
         self.local_mapping_iters = 0
         self.latest_mapping_loss = 0.0
+        self.mapping_iters_history = []
+        self.mapping_iters_kf_indices = []
 
     def set_hyperparams(self):
         self.save_results = self.config["Results"]["save_results"]
@@ -92,6 +94,8 @@ class BackEnd(mp.Process):
         self.latest_kf_idx = 0
         self.local_mapping_iters = 0
         self.latest_mapping_loss = 0.0
+        self.mapping_iters_history = []
+        self.mapping_iters_kf_indices = []
 
         # remove all gaussians
         self.gaussians.prune_points(self.gaussians.unique_kfIDs >= 0)
@@ -360,7 +364,6 @@ class BackEnd(mp.Process):
                         loss_start = recent_losses[0]
                         relative_decrease = (loss_start - self.latest_mapping_loss) / loss_start
                         if relative_decrease < early_stopping_th:
-                            Log(f"Early stopping triggered at iteration {iter_idx} (rel_decrease: {relative_decrease:.6f} < threshold: {early_stopping_th:.6f})")
                             self.local_mapping_iters -= (iters - (iter_idx + 1))
                             break
         return gaussian_split
@@ -462,7 +465,9 @@ class BackEnd(mp.Process):
 
                 elif data[0] == "keyframe":
                     cur_frame_idx = data[1]
-                    Log(f"Received KF {cur_frame_idx}, backend ran {self.local_mapping_iters} mapping iters since last KF")
+                    if self.local_mapping_iters > 0:
+                        self.mapping_iters_history.append(self.local_mapping_iters)
+                        self.mapping_iters_kf_indices.append(cur_frame_idx)
                     self.local_mapping_iters = 0
                     viewpoint = Camera.from_dict(data[2])
                     current_window = data[3]
@@ -544,5 +549,32 @@ class BackEnd(mp.Process):
         with open(save_path, "w", encoding="utf-8") as f:
             json.dump(self.gaussian_lifecycle, f, indent=4)
         Log(f"Saved gaussian lifecycle to {save_path}")
+
+        # Save mapping iterations history
+        iters_json_path = os.path.join(save_dir, "mapping_iterations.json")
+        with open(iters_json_path, "w", encoding="utf-8") as f:
+            json.dump({
+                "kf_indices": self.mapping_iters_kf_indices,
+                "iters": self.mapping_iters_history
+            }, f, indent=4)
+        Log(f"Saved mapping iterations history to {iters_json_path}")
+
+        # Plot and save iterations graph
+        if self.mapping_iters_kf_indices:
+            try:
+                import matplotlib.pyplot as plt
+                plt.figure(figsize=(10, 5))
+                plt.plot(self.mapping_iters_kf_indices, self.mapping_iters_history, marker='o', color='#2ca02c', linewidth=2.0)
+                plt.title('Backend BA Mapping Iterations per Keyframe', fontsize=14, fontweight='bold', pad=15)
+                plt.xlabel('Keyframe Index', fontsize=12, labelpad=10)
+                plt.ylabel('Iterations', fontsize=12, labelpad=10)
+                plt.grid(True, linestyle='--', alpha=0.6)
+                plt.tight_layout()
+                plot_path = os.path.join(save_dir, "mapping_iterations_graph.png")
+                plt.savefig(plot_path, dpi=200)
+                plt.close()
+                Log(f"Saved mapping iterations graph to {plot_path}")
+            except Exception as e:
+                Log(f"Failed to plot mapping iterations graph: {str(e)}")
 
         return
