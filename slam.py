@@ -9,7 +9,30 @@ import torch.multiprocessing as mp
 import yaml
 from munch import munchify
 
-import wandb
+try:
+    import wandb
+except ImportError:
+    class _DisabledWandb:
+        class Table:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            def add_data(self, *args, **kwargs):
+                pass
+
+        @staticmethod
+        def init(*args, **kwargs):
+            return None
+
+        @staticmethod
+        def define_metric(*args, **kwargs):
+            pass
+
+        @staticmethod
+        def finish(*args, **kwargs):
+            pass
+
+    wandb = _DisabledWandb()
 from gaussian_splatting.scene.gaussian_model import GaussianModel
 from gaussian_splatting.utils.system_utils import mkdir_p
 from gui import gui_utils, slam_gui

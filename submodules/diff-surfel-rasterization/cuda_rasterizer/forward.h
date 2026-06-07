@@ -66,6 +66,9 @@ namespace FORWARD
 		const float* bg_color,
 		float* out_color,
 		float* out_others,
+		bool compute_normal,
+		bool compute_distortion,
+		bool compute_median_depth,
 		int* n_touched);
 }
 

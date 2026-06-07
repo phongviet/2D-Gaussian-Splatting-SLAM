@@ -174,7 +174,12 @@ class FrontEnd(mp.Process):
         actual_itrs = self.tracking_itr_num
         for tracking_itr in range(self.tracking_itr_num):
             render_pkg = render(
-                viewpoint, self.gaussians, self.pipeline_params, self.background
+                viewpoint,
+                self.gaussians,
+                self.pipeline_params,
+                self.background,
+                render_mode="tracking",
+                compute_median_depth=not self.monocular,
             )
             image, depth, opacity = (
                 render_pkg["render"],

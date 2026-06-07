@@ -56,6 +56,9 @@ RasterizeGaussiansCUDA(
 	const int degree,
 	const torch::Tensor& campos,
 	const bool prefiltered,
+	const bool compute_normal,
+	const bool compute_distortion,
+	const bool compute_median_depth,
 	const bool debug)
 {
   if (means3D.ndimension() != 2 || means3D.size(1) != 3) {
@@ -129,6 +132,9 @@ RasterizeGaussiansCUDA(
 		out_color.contiguous().data<float>(),
 		out_others.contiguous().data<float>(),
 		radii.contiguous().data<int>(),
+		compute_normal,
+		compute_distortion,
+		compute_median_depth,
 		debug,
 		n_touched.contiguous().data<int>());
   }
@@ -159,6 +165,9 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Te
 	const int R,
 	const torch::Tensor& binningBuffer,
 	const torch::Tensor& imageBuffer,
+	const bool compute_normal,
+	const bool compute_distortion,
+	const bool compute_median_depth,
 	const bool debug) 
 {
 
@@ -234,6 +243,9 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Te
 	  dL_dscales.contiguous().data<float>(),
 	  dL_drotations.contiguous().data<float>(),
 	  dL_dtau.contiguous().data<float>(),
+	  compute_normal,
+	  compute_distortion,
+	  compute_median_depth,
 	  debug);
   }
 

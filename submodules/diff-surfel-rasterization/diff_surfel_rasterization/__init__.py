@@ -83,6 +83,9 @@ class _RasterizeGaussians(torch.autograd.Function):
             raster_settings.sh_degree,
             raster_settings.campos,
             raster_settings.prefiltered,
+            raster_settings.compute_normal,
+            raster_settings.compute_distortion,
+            raster_settings.compute_median_depth,
             raster_settings.debug
         )
 
@@ -133,11 +136,11 @@ class _RasterizeGaussians(torch.autograd.Function):
             grad_allmap[0:1] = grad_depth
         if grad_opacity is not None:
             grad_allmap[1:2] = grad_opacity
-        if grad_normal is not None:
+        if raster_settings.compute_normal and grad_normal is not None:
             grad_allmap[2:5] = grad_normal
-        if grad_median_depth is not None:
+        if raster_settings.compute_median_depth and grad_median_depth is not None:
             grad_allmap[5:6] = grad_median_depth
-        if grad_dist is not None:
+        if raster_settings.compute_distortion and grad_dist is not None:
             grad_allmap[6:7] = grad_dist
 
         # Restructure args as C++ method expects them
@@ -163,6 +166,9 @@ class _RasterizeGaussians(torch.autograd.Function):
                 num_rendered,
                 binningBuffer,
                 imgBuffer,
+                raster_settings.compute_normal,
+                raster_settings.compute_distortion,
+                raster_settings.compute_median_depth,
                 raster_settings.debug)
 
         # Compute gradients for relevant tensors by invoking backward method
@@ -211,6 +217,9 @@ class GaussianRasterizationSettings(NamedTuple):
     sh_degree : int
     campos : torch.Tensor
     prefiltered : bool
+    compute_normal : bool
+    compute_distortion : bool
+    compute_median_depth : bool
     debug : bool
 
 class GaussianRasterizer(nn.Module):

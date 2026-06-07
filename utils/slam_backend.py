@@ -71,6 +71,28 @@ class BackEnd(mp.Process):
             else False
         )
 
+    def mapping_render_options(self, iteration, total_iterations):
+        training = self.config["Training"]
+        total_iterations = max(total_iterations, 1)
+        lambda_normal = training.get("lambda_normal", 0.0)
+        lambda_distortion = training.get("lambda_distortion", 0.0)
+
+        if training["monocular"]:
+            normal_active = lambda_normal > 0 and iteration > total_iterations / 4
+            distortion_active = lambda_distortion > 0 and iteration > total_iterations / 10
+            median_depth_active = False
+        else:
+            normal_active = lambda_normal > 0
+            distortion_active = lambda_distortion > 0
+            median_depth_active = True
+
+        return {
+            "render_mode": "mapping",
+            "compute_normal": normal_active,
+            "compute_distortion": distortion_active,
+            "compute_median_depth": median_depth_active,
+        }
+
     def add_next_kf(self, frame_idx, viewpoint, init=False, scale=2.0, depth_map=None):
         self.latest_kf_idx = frame_idx
         prev_next_id = self.gaussians._next_global_id
@@ -107,7 +129,12 @@ class BackEnd(mp.Process):
         for mapping_iteration in range(self.init_itr_num):
             self.iteration_count += 1
             render_pkg = render(
-                viewpoint, self.gaussians, self.pipeline_params, self.background
+                viewpoint,
+                self.gaussians,
+                self.pipeline_params,
+                self.background,
+                render_mode="tracking",
+                compute_median_depth=not self.monocular,
             )
             (
                 image,
@@ -185,6 +212,7 @@ class BackEnd(mp.Process):
         for iter_idx in range(iters):
             self.iteration_count += 1
             self.last_sent += 1
+            render_options = self.mapping_render_options(iter_idx, iters)
 
             loss_mapping = 0
             viewspace_point_tensor_acm = []
@@ -198,7 +226,11 @@ class BackEnd(mp.Process):
                 viewpoint = viewpoint_stack[cam_idx]
                 keyframes_opt.append(viewpoint)
                 render_pkg = render(
-                    viewpoint, self.gaussians, self.pipeline_params, self.background
+                    viewpoint,
+                    self.gaussians,
+                    self.pipeline_params,
+                    self.background,
+                    **render_options,
                 )
                 (
                     image,
@@ -230,7 +262,11 @@ class BackEnd(mp.Process):
             for cam_idx in torch.randperm(len(random_viewpoint_stack))[:2]:
                 viewpoint = random_viewpoint_stack[cam_idx]
                 render_pkg = render(
-                    viewpoint, self.gaussians, self.pipeline_params, self.background
+                    viewpoint,
+                    self.gaussians,
+                    self.pipeline_params,
+                    self.background,
+                    **render_options,
                 )
                 (
                     image,
@@ -379,7 +415,11 @@ class BackEnd(mp.Process):
             )
             viewpoint_cam = self.viewpoints[viewpoint_cam_idx]
             render_pkg = render(
-                viewpoint_cam, self.gaussians, self.pipeline_params, self.background
+                viewpoint_cam,
+                self.gaussians,
+                self.pipeline_params,
+                self.background,
+                render_mode="tracking",
             )
             image, visibility_filter, radii = (
                 render_pkg["render"],

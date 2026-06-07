@@ -173,7 +173,10 @@ renderCUDA(
 	float3* __restrict__ dL_dmean2D,
 	float* __restrict__ dL_dnormal3D,
 	float* __restrict__ dL_dopacity,
-	float* __restrict__ dL_dcolors)
+	float* __restrict__ dL_dcolors,
+	bool compute_normal,
+	bool compute_distortion,
+	bool compute_median_depth)
 {
 	// We rasterize again. Compute necessary block info.
 	auto block = cg::this_thread_block();
@@ -219,18 +222,18 @@ renderCUDA(
 	float dL_ddepth;
 	float dL_daccum;
 	float dL_dnormal2D[3];
-	const int median_contributor = inside ? n_contrib[pix_id + H * W] : 0;
+	const int median_contributor = (inside && compute_median_depth) ? n_contrib[pix_id + H * W] : 0;
 	float dL_dmedian_depth;
 	float dL_dmax_dweight;
 
 	if (inside) {
 		dL_ddepth = dL_depths[DEPTH_OFFSET * H * W + pix_id];
 		dL_daccum = dL_depths[ALPHA_OFFSET * H * W + pix_id];
-		dL_dreg = dL_depths[DISTORTION_OFFSET * H * W + pix_id];
+		dL_dreg = compute_distortion ? dL_depths[DISTORTION_OFFSET * H * W + pix_id] : 0.0f;
 		for (int i = 0; i < 3; i++) 
-			dL_dnormal2D[i] = dL_depths[(NORMAL_OFFSET + i) * H * W + pix_id];
+			dL_dnormal2D[i] = compute_normal ? dL_depths[(NORMAL_OFFSET + i) * H * W + pix_id] : 0.0f;
 
-		dL_dmedian_depth = dL_depths[MIDDEPTH_OFFSET * H * W + pix_id];
+		dL_dmedian_depth = compute_median_depth ? dL_depths[MIDDEPTH_OFFSET * H * W + pix_id] : 0.0f;
 		// dL_dmax_dweight = dL_depths[MEDIAN_WEIGHT_OFFSET * H * W + pix_id];
 	}
 
@@ -241,7 +244,7 @@ renderCUDA(
 	float accum_alpha_rec = 0;
 	float accum_normal_rec[3] = {0};
 	// for compute gradient with respect to the distortion map
-	const float final_D = inside ? final_Ts[pix_id + H * W] : 0;
+	const float final_D = (inside && compute_distortion) ? final_Ts[pix_id + H * W] : 0;
 	const float final_A = 1 - T_final;
 	float last_dL_dT = 0;
 #endif
@@ -355,7 +358,11 @@ renderCUDA(
 #if RENDER_AXUTILITY
 			const float m_d = far_n / (far_n - near_n) * (1 - near_n / c_d);
 			const float dmd_dd = (far_n * near_n) / ((far_n - near_n) * c_d * c_d);
-			if (contributor == median_contributor-1) {
+			float A_after = 0.0f;
+			float M_after = 0.0f;
+			float A_before = 0.0f;
+			float M_before = 0.0f;
+			if (compute_median_depth && contributor == median_contributor-1) {
 				dL_dz += dL_dmedian_depth;
 				// dL_dweight += dL_dmax_dweight;
 			}
@@ -365,18 +372,24 @@ renderCUDA(
 			dL_dweight += 0;
 #else
 			// Absolute distortion gradient: 2 * (m_d * (A_before - A_after) + (M_after - M_before))
-			float A_after = accum_alpha_rec;
-			float M_after = accum_depth_rec;
-			float A_before = final_A - A_after - alpha;
-			float M_before = final_D - M_after - alpha * m_d;
-			dL_dweight += 2.0f * (m_d * (A_before - A_after) + (M_after - M_before)) * dL_dreg;
+			if (compute_distortion) {
+				A_after = accum_alpha_rec;
+				M_after = accum_depth_rec;
+				A_before = final_A - A_after - alpha;
+				M_before = final_D - M_after - alpha * m_d;
+				dL_dweight += 2.0f * (m_d * (A_before - A_after) + (M_after - M_before)) * dL_dreg;
+			}
 #endif
-			dL_dalpha += dL_dweight - last_dL_dT;
+			if (compute_distortion)
+				dL_dalpha += dL_dweight - last_dL_dT;
 			// propagate the current weight W_{i} to next weight W_{i-1}
-			last_dL_dT = dL_dweight * alpha + (1 - alpha) * last_dL_dT;
+			if (compute_distortion)
+				last_dL_dT = dL_dweight * alpha + (1 - alpha) * last_dL_dT;
 
-			const float dL_dmd = 2.0f * (T * alpha) * (A_before - A_after) * dL_dreg;
-			dL_dz += dL_dmd * dmd_dd;
+			if (compute_distortion) {
+				const float dL_dmd = 2.0f * (T * alpha) * (A_before - A_after) * dL_dreg;
+				dL_dz += dL_dmd * dmd_dd;
+			}
 
 			// Propagate gradients w.r.t ray-splat depths
 			accum_depth_rec = last_alpha * last_depth + (1.f - last_alpha) * accum_depth_rec;
@@ -387,11 +400,13 @@ renderCUDA(
 			dL_dalpha += (1 - accum_alpha_rec) * dL_daccum;
 
 			// Propagate gradients to per-Gaussian normals
-			for (int ch = 0; ch < 3; ch++) {
-				accum_normal_rec[ch] = last_alpha * last_normal[ch] + (1.f - last_alpha) * accum_normal_rec[ch];
-				last_normal[ch] = normal[ch];
-				dL_dalpha += (normal[ch] - accum_normal_rec[ch]) * dL_dnormal2D[ch];
-				atomicAdd((&dL_dnormal3D[global_id * 3 + ch]), alpha * T * dL_dnormal2D[ch]);
+			if (compute_normal) {
+				for (int ch = 0; ch < 3; ch++) {
+					accum_normal_rec[ch] = last_alpha * last_normal[ch] + (1.f - last_alpha) * accum_normal_rec[ch];
+					last_normal[ch] = normal[ch];
+					dL_dalpha += (normal[ch] - accum_normal_rec[ch]) * dL_dnormal2D[ch];
+					atomicAdd((&dL_dnormal3D[global_id * 3 + ch]), alpha * T * dL_dnormal2D[ch]);
+				}
 			}
 #endif
 
@@ -819,7 +834,10 @@ void BACKWARD::render(
 	float3* dL_dmean2D,
 	float* dL_dnormal3D,
 	float* dL_dopacity,
-	float* dL_dcolors)
+	float* dL_dcolors,
+	bool compute_normal,
+	bool compute_distortion,
+	bool compute_median_depth)
 {
 	renderCUDA<NUM_CHANNELS> << <grid, block >> >(
 		ranges,
@@ -840,6 +858,9 @@ void BACKWARD::render(
 		dL_dmean2D,
 		dL_dnormal3D,
 		dL_dopacity,
-		dL_dcolors
+		dL_dcolors,
+		compute_normal,
+		compute_distortion,
+		compute_median_depth
 		);
 }

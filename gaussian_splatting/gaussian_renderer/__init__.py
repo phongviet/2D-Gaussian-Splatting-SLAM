@@ -29,6 +29,10 @@ def render(
     scaling_modifier=1.0,
     override_color=None,
     mask=None,
+    render_mode="full",
+    compute_normal=None,
+    compute_distortion=None,
+    compute_median_depth=None,
 ):
     """
     Render the scene.
@@ -54,6 +58,16 @@ def render(
     # Set up rasterization configuration
     tanfovx = math.tan(viewpoint_camera.FoVx * 0.5)
     tanfovy = math.tan(viewpoint_camera.FoVy * 0.5)
+    if render_mode == "tracking":
+        default_compute_aux = False
+    elif render_mode in ("mapping", "full"):
+        default_compute_aux = True
+    else:
+        raise ValueError(f"Unknown render_mode: {render_mode}")
+
+    compute_normal = default_compute_aux if compute_normal is None else compute_normal
+    compute_distortion = default_compute_aux if compute_distortion is None else compute_distortion
+    compute_median_depth = default_compute_aux if compute_median_depth is None else compute_median_depth
 
     raster_settings = GaussianRasterizationSettings(
         image_height=int(viewpoint_camera.image_height),
@@ -68,6 +82,9 @@ def render(
         sh_degree=pc.active_sh_degree,
         campos=viewpoint_camera.camera_center,
         prefiltered=False,
+        compute_normal=compute_normal,
+        compute_distortion=compute_distortion,
+        compute_median_depth=compute_median_depth,
         debug=False,
     )
 

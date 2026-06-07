@@ -17,7 +17,15 @@ matplotlib.use('Agg')
 import matplotlib.cm as cm
 from torchmetrics.image.lpip import LearnedPerceptualImagePatchSimilarity
 
-import wandb
+try:
+    import wandb
+except ImportError:
+    class _DisabledWandb:
+        @staticmethod
+        def log(*args, **kwargs):
+            pass
+
+    wandb = _DisabledWandb()
 from gaussian_splatting.gaussian_renderer import render
 from gaussian_splatting.utils.image_utils import psnr
 from gaussian_splatting.utils.loss_utils import ssim

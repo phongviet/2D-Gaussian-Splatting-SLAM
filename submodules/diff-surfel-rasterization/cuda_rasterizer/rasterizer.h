@@ -51,6 +51,9 @@ namespace CudaRasterizer
 			float* out_color,
 			float* out_others,
 			int* radii = nullptr,
+			bool compute_normal = true,
+			bool compute_distortion = true,
+			bool compute_median_depth = true,
 			bool debug = false,
 			int* n_touched = nullptr);
 
@@ -86,6 +89,9 @@ namespace CudaRasterizer
 			float* dL_dscale,
 			float* dL_drot,
 			float* dL_dtau,
+			bool compute_normal,
+			bool compute_distortion,
+			bool compute_median_depth,
 			bool debug);
 	};
 };

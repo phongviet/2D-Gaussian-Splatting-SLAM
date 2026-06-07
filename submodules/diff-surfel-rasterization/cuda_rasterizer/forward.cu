@@ -270,6 +270,9 @@ renderCUDA(
 	const float* __restrict__ bg_color,
 	float* __restrict__ out_color,
 	float* __restrict__ out_others,
+	bool compute_normal,
+	bool compute_distortion,
+	bool compute_median_depth,
 	int* __restrict__ n_touched)
 {
 	// Identify current tile and associated min/max pixel range.
@@ -372,7 +375,6 @@ renderCUDA(
 			if (depth < near_n) continue;
 
 			float4 nor_o = collected_normal_opacity[j];
-			float normal[3] = {nor_o.x, nor_o.y, nor_o.z};
 			float opa = nor_o.w;
 
 			float power = -0.5f * rho;
@@ -400,20 +402,24 @@ renderCUDA(
 			}
 
 #if RENDER_AXUTILITY
-			// Render depth distortion map
-			// Efficient implementation of absolute distortion loss: 2 * sum_i w_i (m_i * A_i - M1_i)
-			float A = 1 - T;
-			float m = far_n / (far_n - near_n) * (1 - near_n / depth);
-			distortion += (m * A - M1) * w;
-			M1 += m * w;
+			if (compute_distortion) {
+				// Efficient absolute distortion loss: 2 * sum_i w_i (m_i * A_i - M1_i).
+				float A = 1 - T;
+				float m = far_n / (far_n - near_n) * (1 - near_n / depth);
+				distortion += (m * A - M1) * w;
+				M1 += m * w;
+			}
 
-			if (T > 0.5) {
+			if (compute_median_depth && T > 0.5) {
 				median_depth = depth;
 				// median_weight = w;
 				median_contributor = contributor;
 			}
-			// Render normal map
-			for (int ch=0; ch<3; ch++) N[ch] += normal[ch] * w;
+			if (compute_normal) {
+				N[0] += nor_o.x * w;
+				N[1] += nor_o.y * w;
+				N[2] += nor_o.z * w;
+			}
 #endif
 
 			// Eq. (3) from 3D Gaussian splatting paper.
@@ -437,14 +443,19 @@ renderCUDA(
 			out_color[ch * H * W + pix_id] = C[ch] + T * bg_color[ch];
 
 #if RENDER_AXUTILITY
-		n_contrib[pix_id + H * W] = median_contributor;
-		final_T[pix_id + H * W] = M1;
+		if (compute_median_depth)
+			n_contrib[pix_id + H * W] = median_contributor;
+		if (compute_distortion)
+			final_T[pix_id + H * W] = M1;
 		// final_T[pix_id + 2 * H * W] = M2; // No longer needed for absolute distortion
 		out_others[pix_id + DEPTH_OFFSET * H * W] = D;
 		out_others[pix_id + ALPHA_OFFSET * H * W] = 1 - T;
-		for (int ch=0; ch<3; ch++) out_others[pix_id + (NORMAL_OFFSET+ch) * H * W] = N[ch];
-		out_others[pix_id + MIDDEPTH_OFFSET * H * W] = median_depth;
-		out_others[pix_id + DISTORTION_OFFSET * H * W] = 2.0f * distortion;
+		if (compute_normal)
+			for (int ch=0; ch<3; ch++) out_others[pix_id + (NORMAL_OFFSET+ch) * H * W] = N[ch];
+		if (compute_median_depth)
+			out_others[pix_id + MIDDEPTH_OFFSET * H * W] = median_depth;
+		if (compute_distortion)
+			out_others[pix_id + DISTORTION_OFFSET * H * W] = 2.0f * distortion;
 		// out_others[pix_id + MEDIAN_WEIGHT_OFFSET * H * W] = median_weight;
 #endif
 	}
@@ -466,6 +477,9 @@ void FORWARD::render(
 	const float* bg_color,
 	float* out_color,
 	float* out_others,
+	bool compute_normal,
+	bool compute_distortion,
+	bool compute_median_depth,
 	int* n_touched)
 {
 	renderCUDA<NUM_CHANNELS> << <grid, block >> > (
@@ -483,6 +497,9 @@ void FORWARD::render(
 		bg_color,
 		out_color,
 		out_others,
+		compute_normal,
+		compute_distortion,
+		compute_median_depth,
 		n_touched);
 }
 
