@@ -117,12 +117,16 @@ def main():
         rendered_normal = depth_to_normal(view, rendered_depth)
         
     gt_d = gt_depth if isinstance(gt_depth, np.ndarray) else gt_depth.cpu().numpy()
-    np.savez(args.out,
+    np.savez_compressed(args.out,
         rgb=rendered_image.cpu().numpy().transpose(1, 2, 0),
         depth=rendered_depth[0].cpu().numpy(),
         normal=rendered_normal.cpu().numpy() * 0.5 + 0.5,
         gt_rgb=image.cpu().numpy().transpose(1, 2, 0),
-        gt_depth=gt_d
+        gt_depth=gt_d,
+        frame=np.int64(args.frame),
+        alignment_scale=np.float64(s),
+        alignment_rotation=R,
+        alignment_translation=t,
     )
 
 if __name__ == "__main__":

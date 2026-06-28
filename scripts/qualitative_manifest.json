@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "scenes": [
+    {
+      "id": "fr3_office_2134",
+      "label": "TUM fr3_office, frame 2134",
+      "dataset": "tum",
+      "frame": 2134,
+      "ours_result": "2dgslam/results/stability_fr3_office_ds64_rep2/tum_rgbd_dataset_freiburg3_long_office_household/2026-06-01-12-11-44",
+      "monogs_result": "Original_MonoGS_Code/results/datasets_tum/2026-05-04-00-37-08"
+    },
+    {
+      "id": "replica_office1_1615",
+      "label": "Replica office1, frame 1615",
+      "dataset": "replica",
+      "frame": 1615,
+      "ours_result": "2dgslam/results/replica_office1/2026-04-28-23-50-06",
+      "monogs_result": "Original_MonoGS_Code/results/replica_office1/2026-05-04-02-55-11"
+    },
+    {
+      "id": "replica_room0_1664",
+      "label": "Replica room0, frame 1664",
+      "dataset": "replica",
+      "frame": 1664,
+      "ours_result": "2dgslam/results/replica_room0/2026-05-10-01-18-54",
+      "monogs_result": "Original_MonoGS_Code/results/replica_room0/2026-05-04-08-19-07"
+    }
+  ]
+}
