@@ -21,6 +21,36 @@ from gaussian_splatting.scene.gaussian_model import GaussianModel
 from gaussian_splatting.utils.sh_utils import eval_sh
 
 
+def _settings_supports(field):
+    return field in getattr(GaussianRasterizationSettings, "_fields", ())
+
+
+def _call_rasterizer(rasterizer, **kwargs):
+    outputs = rasterizer(**kwargs)
+    if len(outputs) == 8:
+        return outputs
+    if len(outputs) == 5:
+        rendered_image, radii, depth, opacity, n_touched = outputs
+        normal = torch.zeros(
+            (3, depth.shape[-2], depth.shape[-1]),
+            dtype=depth.dtype,
+            device=depth.device,
+        )
+        median_depth = depth
+        distortion = torch.zeros_like(depth)
+        return (
+            rendered_image,
+            radii,
+            depth,
+            opacity,
+            n_touched,
+            normal,
+            median_depth,
+            distortion,
+        )
+    raise RuntimeError(f"Unexpected rasterizer output count: {len(outputs)}")
+
+
 def render(
     viewpoint_camera,
     pc: GaussianModel,
@@ -69,24 +99,30 @@ def render(
     compute_distortion = default_compute_aux if compute_distortion is None else compute_distortion
     compute_median_depth = default_compute_aux if compute_median_depth is None else compute_median_depth
 
-    raster_settings = GaussianRasterizationSettings(
-        image_height=int(viewpoint_camera.image_height),
-        image_width=int(viewpoint_camera.image_width),
-        tanfovx=tanfovx,
-        tanfovy=tanfovy,
-        bg=bg_color,
-        scale_modifier=scaling_modifier,
-        viewmatrix=viewpoint_camera.world_view_transform,
-        projmatrix=viewpoint_camera.full_proj_transform,
-        projmatrix_raw=viewpoint_camera.projection_matrix,
-        sh_degree=pc.active_sh_degree,
-        campos=viewpoint_camera.camera_center,
-        prefiltered=False,
-        compute_normal=compute_normal,
-        compute_distortion=compute_distortion,
-        compute_median_depth=compute_median_depth,
-        debug=False,
-    )
+    raster_settings_kwargs = {
+        "image_height": int(viewpoint_camera.image_height),
+        "image_width": int(viewpoint_camera.image_width),
+        "tanfovx": tanfovx,
+        "tanfovy": tanfovy,
+        "bg": bg_color,
+        "scale_modifier": scaling_modifier,
+        "viewmatrix": viewpoint_camera.world_view_transform,
+        "projmatrix": viewpoint_camera.full_proj_transform,
+        "sh_degree": pc.active_sh_degree,
+        "campos": viewpoint_camera.camera_center,
+        "prefiltered": False,
+        "debug": False,
+    }
+    if _settings_supports("projmatrix_raw"):
+        raster_settings_kwargs["projmatrix_raw"] = viewpoint_camera.projection_matrix
+    if _settings_supports("compute_normal"):
+        raster_settings_kwargs["compute_normal"] = compute_normal
+    if _settings_supports("compute_distortion"):
+        raster_settings_kwargs["compute_distortion"] = compute_distortion
+    if _settings_supports("compute_median_depth"):
+        raster_settings_kwargs["compute_median_depth"] = compute_median_depth
+
+    raster_settings = GaussianRasterizationSettings(**raster_settings_kwargs)
 
     rasterizer = GaussianRasterizer(raster_settings=raster_settings)
 
@@ -131,7 +167,8 @@ def render(
 
     # Rasterize visible Gaussians to image, obtain their radii (on screen).
     if mask is not None:
-        rendered_image, radii, depth, opacity, n_touched, normal, median_depth, distortion = rasterizer(
+        rendered_image, radii, depth, opacity, n_touched, normal, median_depth, distortion = _call_rasterizer(
+            rasterizer,
             means3D=means3D[mask],
             means2D=means2D[mask],
             shs=shs[mask],
@@ -144,7 +181,8 @@ def render(
             rho=viewpoint_camera.cam_trans_delta,
         )
     else:
-        rendered_image, radii, depth, opacity, n_touched, normal, median_depth, distortion = rasterizer(
+        rendered_image, radii, depth, opacity, n_touched, normal, median_depth, distortion = _call_rasterizer(
+            rasterizer,
             means3D=means3D,
             means2D=means2D,
             shs=shs,
