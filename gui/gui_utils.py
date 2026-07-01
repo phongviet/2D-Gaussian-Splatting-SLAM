@@ -211,9 +211,17 @@ class ParamsGUI:
         gaussians=None,
         q_main2vis=None,
         q_vis2main=None,
+        record_video=False,
+        record_video_dir=None,
+        record_video_fps=15,
+        record_video_interval=1,
     ):
         self.pipe = pipe
         self.background = background
         self.gaussians = gaussians
         self.q_main2vis = q_main2vis
         self.q_vis2main = q_vis2main
+        self.record_video = record_video
+        self.record_video_dir = record_video_dir
+        self.record_video_fps = record_video_fps
+        self.record_video_interval = record_video_interval

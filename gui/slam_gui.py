@@ -28,8 +28,16 @@ from gui.gui_utils import (
     cv_gl,
     get_latest_queue,
 )
+from gui.video_recorder import (
+    OptimizationVideoRecorder,
+    depth_frame_to_uint8,
+    depth_range_from_gt,
+    normal_frame_to_uint8,
+    rgb_frame_to_uint8,
+)
 from utils.camera_utils import Camera
 from utils.logging_utils import Log
+from utils.slam_utils import depth_to_normal as depth_to_normal_from_depth
 
 o3d.utility.set_verbosity_level(o3d.utility.VerbosityLevel.Error)
 
@@ -53,6 +61,10 @@ class SLAM_GUI:
         self.init = False
         self.kf_window = None
         self.render_img = None
+        self.video_recorder = None
+        self.video_update_count = 0
+        self.record_video_interval = 1
+        self.record_depth_range = (None, None)
 
         if params_gui is not None:
             self.background = params_gui.background
@@ -62,6 +74,18 @@ class SLAM_GUI:
             self.q_main2vis = params_gui.q_main2vis
             self.q_vis2main = params_gui.q_vis2main
             self.pipe = params_gui.pipe
+            self.record_video_interval = max(
+                1, int(getattr(params_gui, "record_video_interval", 1))
+            )
+            if getattr(params_gui, "record_video", False):
+                self.video_recorder = OptimizationVideoRecorder(
+                    params_gui.record_video_dir,
+                    fps=int(getattr(params_gui, "record_video_fps", 15)),
+                )
+                Log(
+                    f"Recording optimization videos to {params_gui.record_video_dir}",
+                    tag="GUI",
+                )
 
         self.gaussian_nums = []
 
@@ -82,6 +106,8 @@ class SLAM_GUI:
 
     def init_widget(self):
         self.window_w, self.window_h = 1600, 900
+        self.widget3d_width_ratio = 0.7
+        self.widget3d_width = int(self.window_w * self.widget3d_width_ratio)
 
         self.window = gui.Application.instance.create_window(
             "2dgslam", self.window_w, self.window_h
@@ -309,8 +335,15 @@ class SLAM_GUI:
         )
 
     def _on_close(self):
+        self.close_video_recorder()
         self.is_done = True
         return True  # False would cancel the close
+
+    def close_video_recorder(self):
+        if self.video_recorder is None:
+            return
+        self.video_recorder.close()
+        self.video_recorder = None
 
     def _on_combo_model(self, new_val, new_idx):
         model_idx = self.model_dict[new_val]
@@ -433,6 +466,10 @@ class SLAM_GUI:
             frustum = self.add_camera(
                 gaussian_packet.current_frame, name="current", color=[0, 1, 0]
             )
+            if gaussian_packet.current_frame.depth is not None:
+                self.record_depth_range = depth_range_from_gt(
+                    gaussian_packet.current_frame.depth
+                )
             if self.followcam_chbox.checked:
                 viewpoint = (
                     frustum.view_dir_behind
@@ -483,6 +520,7 @@ class SLAM_GUI:
             self.q_vis2main = None
             self.q_main2vis = None
             self.process_finished = True
+            self.close_video_recorder()
 
     @staticmethod
     def depth_to_normal(points, k=3, d_min=1e-3, d_max=10.0):
@@ -567,11 +605,11 @@ class SLAM_GUI:
         current_cam.update_RT(T[0:3, 0:3], T[0:3, 3])
         return current_cam
 
-    def rasterise(self, current_cam):
+    def rasterise(self, current_cam, compute_normal=None):
         if (
             self.time_shader_chbox.checked
             and self.gaussian_cur is not None
-            and type(self.gaussian_cur) == GaussianPacket
+            and isinstance(self.gaussian_cur, GaussianPacket)
         ):
             features = self.gaussian_cur.get_features.clone()
             kf_ids = self.gaussian_cur.unique_kfIDs.float()
@@ -588,6 +626,7 @@ class SLAM_GUI:
                 self.pipe,
                 self.background,
                 self.scaling_slider.double_value,
+                compute_normal=compute_normal,
             )
             self.gaussian_cur.get_features = features
         else:
@@ -597,6 +636,7 @@ class SLAM_GUI:
                 self.pipe,
                 self.background,
                 self.scaling_slider.double_value,
+                compute_normal=compute_normal,
             )
         return rendering_data
 
@@ -678,15 +718,67 @@ class SLAM_GUI:
             render_img = o3d.geometry.Image(rgb)
         return render_img
 
+    def set_recording_viewpoint(self):
+        frustum = self.frustum_dict.get("current")
+        if frustum is None:
+            return
+        viewpoint = frustum.view_dir_behind
+        self.widget3d.look_at(viewpoint[0], viewpoint[1], viewpoint[2])
+
+    def render_o3d_image_for_recording(self, results, mode, current_cam):
+        if mode == "rgb":
+            return o3d.geometry.Image(rgb_frame_to_uint8(results["render"]))
+        if mode == "depth":
+            return o3d.geometry.Image(
+                depth_frame_to_uint8(results["depth"], *self.record_depth_range)
+            )
+        if mode == "normal":
+            normal = depth_to_normal_from_depth(current_cam, results["depth"])
+            return o3d.geometry.Image(normal_frame_to_uint8(normal))
+        raise ValueError(f"Unknown recording mode: {mode}")
+
+    def capture_scene_rgb(self):
+        app = o3d.visualization.gui.Application.instance
+        width = int(self.widget3d_width)
+        height = int(self.window.size.height)
+        return np.asarray(app.render_to_image(self.widget3d.scene, width, height))
+
+    def record_gui_frame(self, results, current_cam):
+        if self.video_recorder is None:
+            return
+
+        self.video_update_count += 1
+        if self.video_update_count % self.record_video_interval != 0:
+            return
+
+        self.cameras_chbox.checked = True
+        self._on_cameras_chbox(True)
+
+        try:
+            for mode in ("rgb", "depth", "normal"):
+                render_img = self.render_o3d_image_for_recording(
+                    results, mode, current_cam
+                )
+                self.widget3d.scene.set_background([0, 0, 0, 1], render_img)
+                self.video_recorder.write(mode, self.capture_scene_rgb())
+        except Exception as exc:
+            Log(f"Stopping optimization video recording: {exc}", tag="GUI")
+            self.close_video_recorder()
+
     def render_gui(self):
         if not self.init:
             return
+        if self.video_recorder is not None:
+            self.set_recording_viewpoint()
         current_cam = self.get_current_cam()
         results = self.rasterise(current_cam)
         if results is None:
             return
         self.render_img = self.render_o3d_image(results, current_cam)
         self.widget3d.scene.set_background([0, 0, 0, 1], self.render_img)
+        self.record_gui_frame(results, current_cam)
+        if self.render_img is not None:
+            self.widget3d.scene.set_background([0, 0, 0, 1], self.render_img)
 
     def scene_update(self):
         self.receive_data(self.q_main2vis)
@@ -716,14 +808,14 @@ def run(params_gui=None):
         params_gui.background = params_gui.background.cuda()
     app = o3d.visualization.gui.Application.instance
     app.initialize()
-    win = SLAM_GUI(params_gui)
+    _win = SLAM_GUI(params_gui)
     app.run()
 
 
 def main():
     app = o3d.visualization.gui.Application.instance
     app.initialize()
-    win = SLAM_GUI()
+    _win = SLAM_GUI()
     app.run()
 
 

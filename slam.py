@@ -38,11 +38,31 @@ from gaussian_splatting.utils.system_utils import mkdir_p
 from gui import gui_utils, slam_gui
 from utils.config_utils import load_config
 from utils.dataset import load_dataset
-from utils.eval_utils import eval_ate, eval_rendering, save_eval_summary, save_gaussians, save_metrics_graphs
+from utils.eval_utils import eval_ate, eval_rendering, save_eval_summary, save_metrics_graphs
 from utils.logging_utils import Log
 from utils.multiprocessing_utils import FakeQueue
 from utils.slam_backend import BackEnd
 from utils.slam_frontend import FrontEnd
+
+
+def make_save_dir(config, config_path):
+    mkdir_p(config["Results"]["save_dir"])
+    current_datetime = datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
+    dataset_path = config["Dataset"].get("dataset_path", config["Dataset"]["type"])
+    path = [p for p in dataset_path.split("/") if p]
+    dataset_name = path[-2] + "_" + path[-1] if len(path) >= 2 else "dataset"
+    if len(path) == 1:
+        dataset_name = path[-1]
+    save_dir = os.path.join(
+        config["Results"]["save_dir"], dataset_name, current_datetime
+    )
+    config["Results"]["save_dir"] = save_dir
+    mkdir_p(save_dir)
+    with open(os.path.join(save_dir, "config.yml"), "w", encoding="utf-8") as file:
+        yaml.dump(config, file)
+    Log("saving results in " + save_dir)
+    run_name = f"{config_path.split('.')[0]}_{current_datetime}"
+    return save_dir, run_name
 
 
 class SLAM:
@@ -69,6 +89,10 @@ class SLAM:
         self.use_gui = self.config["Results"]["use_gui"]
         if self.live_mode:
             self.use_gui = True
+        self.record_optimization_video = self.config["Results"].get(
+            "record_optimization_video", False
+        )
+        self.use_visualizer = self.use_gui or self.record_optimization_video
         self.eval_rendering = self.config["Results"]["eval_rendering"]
 
         model_params.sh_degree = 3 if self.use_spherical_harmonics else 0
@@ -86,8 +110,8 @@ class SLAM:
         frontend_queue = mp.Queue()
         backend_queue = mp.Queue()
 
-        q_main2vis = mp.Queue() if self.use_gui else FakeQueue()
-        q_vis2main = mp.Queue() if self.use_gui else FakeQueue()
+        q_main2vis = mp.Queue() if self.use_visualizer else FakeQueue()
+        q_vis2main = mp.Queue() if self.use_visualizer else FakeQueue()
 
         self.config["Results"]["save_dir"] = save_dir
         self.config["Training"]["monocular"] = self.monocular
@@ -121,10 +145,16 @@ class SLAM:
             gaussians=None,
             q_main2vis=q_main2vis,
             q_vis2main=q_vis2main,
+            record_video=self.record_optimization_video,
+            record_video_dir=self.config["Results"].get("record_video_dir"),
+            record_video_fps=self.config["Results"].get("record_video_fps", 15),
+            record_video_interval=self.config["Results"].get(
+                "record_video_interval", 1
+            ),
         )
 
         backend_process = mp.Process(target=self.backend.run)
-        if self.use_gui:
+        if self.use_visualizer:
             # Open3D's Filament backend segfaults (SIGSEGV) when running in a
             # mp.spawn child process under native Wayland.  Force XWayland via
             # the X11 display so the GUI process survives.
@@ -240,7 +270,7 @@ class SLAM:
         backend_queue.put(["stop"])
         backend_process.join()
         Log("Backend stopped and joined the main thread")
-        if self.use_gui:
+        if self.use_visualizer:
             q_main2vis.put(gui_utils.GaussianPacket(finish=True))
             gui_process.join()
             Log("GUI Stopped and joined the main thread")
@@ -254,6 +284,9 @@ if __name__ == "__main__":
     parser = ArgumentParser(description="Training script parameters")
     parser.add_argument("--config", type=str)
     parser.add_argument("--eval", action="store_true")
+    parser.add_argument("--record-optimization-video", action="store_true")
+    parser.add_argument("--record-video-fps", type=int, default=15)
+    parser.add_argument("--record-video-interval", type=int, default=1)
 
     args = parser.parse_args(sys.argv[1:])
 
@@ -277,24 +310,20 @@ if __name__ == "__main__":
         Log("\tuse_wandb=False")
         config["Results"]["use_wandb"] = False
 
-    if config["Results"]["save_results"]:
-        mkdir_p(config["Results"]["save_dir"])
-        current_datetime = datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
-        # Accurate folder name (dataset_scene)
-        path = [p for p in config["Dataset"]["dataset_path"].split("/") if p]
-        save_dir = os.path.join(
-            config["Results"]["save_dir"], path[-2] + "_" + path[-1], current_datetime
+    config["Results"]["record_optimization_video"] = args.record_optimization_video
+    config["Results"]["record_video_fps"] = max(1, args.record_video_fps)
+    config["Results"]["record_video_interval"] = max(1, args.record_video_interval)
+
+    if config["Results"]["save_results"] or args.record_optimization_video:
+        save_dir, run_name = make_save_dir(config, args.config)
+        config["Results"]["record_video_dir"] = os.path.join(
+            save_dir, "optimization_videos"
         )
-        tmp = args.config
-        tmp = tmp.split(".")[0]
-        config["Results"]["save_dir"] = save_dir
-        mkdir_p(save_dir)
-        with open(os.path.join(save_dir, "config.yml"), "w") as file:
-            documents = yaml.dump(config, file)
-        Log("saving results in " + save_dir)
+        with open(os.path.join(save_dir, "config.yml"), "w", encoding="utf-8") as file:
+            yaml.dump(config, file)
         run = wandb.init(
             project="2dgslam",
-            name=f"{tmp}_{current_datetime}",
+            name=run_name,
             config=config,
             mode=None if config["Results"]["use_wandb"] else "disabled",
         )
@@ -308,3 +337,5 @@ if __name__ == "__main__":
 
     # All done
     Log("Done.")
+    os._exit(0)
+
