@@ -1,0 +1,17 @@
+inherit_from: configs/mono/tum/base_config.yaml
+Dataset:
+  dataset_path: datasets/tum/B1-9a_1280x960
+  Calibration:
+    fx: 1063.4510666666665
+    fy: 1063.4510666666665
+    cx: 635.7745333333332
+    cy: 477.84488666666664
+    k1: 0.0
+    k2: 0.0
+    p1: 0.0
+    p2: 0.0
+    k3: 0.0
+    width: 1280
+    height: 960
+    distorted: false
+    depth_scale: 1000.0

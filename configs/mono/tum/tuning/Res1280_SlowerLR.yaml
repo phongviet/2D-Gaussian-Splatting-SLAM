@@ -1,0 +1,93 @@
+Results:
+  save_results: true
+  save_dir: results
+  save_trj: true
+  save_trj_kf_intv: 10
+  use_gui: false
+  eval_rendering: true
+  use_wandb: false
+  export_metrics_graph: true
+Dataset:
+  type: tum
+  sensor_type: monocular
+  pcd_downsample: 64
+  pcd_downsample_init: 32
+  adaptive_pointsize: true
+  point_size: 0.01
+  dataset_path: datasets/tum/B1-9a_1280x960
+  Calibration:
+    width: 1280
+    height: 960
+    fx: 1063.4510666666665
+    fy: 1063.4510666666665
+    cx: 635.7745333333332
+    cy: 477.84488666666664
+    distorted: false
+    depth_scale: 1000.0
+    k1: 0.0
+    k2: 0.0
+    p1: 0.0
+    p2: 0.0
+    k3: 0.0
+Training:
+  init_itr_num: 1050
+  init_gaussian_update: 100
+  init_gaussian_reset: 500
+  init_gaussian_th: 0.005
+  init_gaussian_extent: 30
+  tracking_itr_num: 200
+  mapping_itr_num: 250
+  gaussian_update_every: 150
+  gaussian_update_offset: 50
+  gaussian_th: 0.7
+  gaussian_extent: 1.0
+  gaussian_reset: 2001
+  size_threshold: 20
+  kf_interval: 4
+  window_size: 10
+  pose_window: 3
+  edge_threshold: 1.1
+  rgb_boundary_threshold: 0.01
+  lambda_normal: 0.05
+  lambda_distortion: 0.001
+  kf_translation: 0.06
+  kf_min_translation: 0.03
+  kf_overlap: 0.9
+  kf_cutoff: 0.3
+  init_kf_cutoff: 0.1
+  prune_mode: slam
+  single_thread: false
+  early_stopping_th: 0.0
+  spherical_harmonics: false
+  lr:
+    cam_rot_delta: 0.002
+    cam_trans_delta: 0.0005
+  pcd_downsample: 32
+  pcd_downsample_init: 16
+opt_params:
+  iterations: 30000
+  position_lr_init: 0.0016
+  position_lr_final: 1.6e-06
+  position_lr_delay_mult: 0.01
+  position_lr_max_steps: 30000
+  feature_lr: 0.0025
+  opacity_lr: 0.05
+  scaling_lr: 0.001
+  rotation_lr: 0.001
+  percent_dense: 0.01
+  lambda_dssim: 0.0
+  densification_interval: 100
+  opacity_reset_interval: 3000
+  densify_from_iter: 500
+  densify_until_iter: 15000
+  densify_grad_threshold: 0.0002
+model_params:
+  sh_degree: 0
+  source_path: ''
+  model_path: ''
+  resolution: -1
+  white_background: false
+  data_device: cuda
+pipeline_params:
+  convert_SHs_python: false
+  compute_cov3D_python: false

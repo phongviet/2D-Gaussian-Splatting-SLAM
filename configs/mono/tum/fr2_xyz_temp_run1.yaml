@@ -1,0 +1,3 @@
+inherit_from: "configs/mono/tum/fr2_xyz.yaml"
+Results:
+  save_dir: "results/new_tum_fr2_xyz_run1"

@@ -1,0 +1,17 @@
+inherit_from: configs/rgbd/tum/base_config.yaml
+Dataset:
+  dataset_path: datasets/tum/B1-9b
+  Calibration:
+    fx: 532.0268
+    fy: 532.0268
+    cx: 317.69586666666663
+    cy: 238.92103333333333
+    k1: 0.0
+    k2: 0.0
+    p1: 0.0
+    p2: 0.0
+    k3: 0.0
+    width: 640
+    height: 480
+    distorted: false
+    depth_scale: 1000.0

@@ -1,0 +1,27 @@
+inherit_from: configs/mono/tum/base_config.yaml
+Dataset:
+  dataset_path: datasets/tum/B1-9a
+  pcd_downsample: 32
+  pcd_downsample_init: 16
+  Calibration:
+    fx: 531.7255333333333
+    fy: 531.7255333333333
+    cx: 317.8872666666666
+    cy: 238.92244333333332
+    k1: 0.0
+    k2: 0.0
+    p1: 0.0
+    p2: 0.0
+    k3: 0.0
+    width: 640
+    height: 480
+    distorted: false
+    depth_scale: 1000.0
+
+Training:
+  tracking_itr_num: 200
+  mapping_itr_num: 250
+  window_size: 10
+  kf_interval: 4
+  kf_translation: 0.06
+  kf_min_translation: 0.03

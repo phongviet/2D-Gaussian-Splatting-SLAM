@@ -22,6 +22,7 @@ result*
 !DRIFT_FIX.md
 *.pdf
 !README.md
+!EVALUATION_RESULTS.md
 *.log
 *.txt
 *.png

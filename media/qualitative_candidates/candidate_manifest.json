@@ -1,0 +1,82 @@
+[
+  {
+    "rank": 1,
+    "scene": "fr3_office",
+    "frame": 2134,
+    "score": 78.75,
+    "rgb": "/home/2DGS_SLAM/2dgslam/media/qualitative_candidates/candidate_01_fr3_office_frame_002134_rgb.png",
+    "source": "/home/2DGS_SLAM/2dgslam/datasets/tum/rgbd_dataset_freiburg3_long_office_household/rgb/1341848054.656449.png"
+  },
+  {
+    "rank": 2,
+    "scene": "fr3_office",
+    "frame": 769,
+    "score": 89.832,
+    "rgb": "/home/2DGS_SLAM/2dgslam/media/qualitative_candidates/candidate_02_fr3_office_frame_000769_rgb.png",
+    "source": "/home/2DGS_SLAM/2dgslam/datasets/tum/rgbd_dataset_freiburg3_long_office_household/rgb/1341848007.137866.png"
+  },
+  {
+    "rank": 3,
+    "scene": "fr3_office",
+    "frame": 779,
+    "score": 89.284,
+    "rgb": "/home/2DGS_SLAM/2dgslam/media/qualitative_candidates/candidate_03_fr3_office_frame_000779_rgb.png",
+    "source": "/home/2DGS_SLAM/2dgslam/datasets/tum/rgbd_dataset_freiburg3_long_office_household/rgb/1341848007.498756.png"
+  },
+  {
+    "rank": 4,
+    "scene": "fr1_desk",
+    "frame": 144,
+    "score": 98.213,
+    "rgb": "/home/2DGS_SLAM/2dgslam/media/qualitative_candidates/candidate_04_fr1_desk_frame_000144_rgb.png",
+    "source": "/home/2DGS_SLAM/2dgslam/datasets/tum/rgbd_dataset_freiburg1_desk/rgb/1305031458.127605.png"
+  },
+  {
+    "rank": 5,
+    "scene": "office3",
+    "frame": 1388,
+    "score": 78.429,
+    "rgb": "/home/2DGS_SLAM/2dgslam/media/qualitative_candidates/candidate_05_office3_frame_001388_rgb.png",
+    "source": "/home/2DGS_SLAM/2dgslam/datasets/replica/office3/results/frame001388.jpg"
+  },
+  {
+    "rank": 6,
+    "scene": "office1",
+    "frame": 1615,
+    "score": 58.246,
+    "rgb": "/home/2DGS_SLAM/2dgslam/media/qualitative_candidates/candidate_06_office1_frame_001615_rgb.png",
+    "source": "/home/2DGS_SLAM/2dgslam/datasets/replica/office1/results/frame001615.jpg"
+  },
+  {
+    "rank": 7,
+    "scene": "room0",
+    "frame": 1664,
+    "score": 84.432,
+    "rgb": "/home/2DGS_SLAM/2dgslam/media/qualitative_candidates/candidate_07_room0_frame_001664_rgb.png",
+    "source": "/home/2DGS_SLAM/2dgslam/datasets/replica/room0/results/frame001664.jpg"
+  },
+  {
+    "rank": 8,
+    "scene": "room2",
+    "frame": 1462,
+    "score": 77.091,
+    "rgb": "/home/2DGS_SLAM/2dgslam/media/qualitative_candidates/candidate_08_room2_frame_001462_rgb.png",
+    "source": "/home/2DGS_SLAM/2dgslam/datasets/replica/room2/results/frame001462.jpg"
+  },
+  {
+    "rank": 9,
+    "scene": "fr1_desk",
+    "frame": 139,
+    "score": 94.045,
+    "rgb": "/home/2DGS_SLAM/2dgslam/media/qualitative_candidates/candidate_09_fr1_desk_frame_000139_rgb.png",
+    "source": "/home/2DGS_SLAM/2dgslam/datasets/tum/rgbd_dataset_freiburg1_desk/rgb/1305031457.959632.png"
+  },
+  {
+    "rank": 10,
+    "scene": "fr1_desk",
+    "frame": 367,
+    "score": 92.399,
+    "rgb": "/home/2DGS_SLAM/2dgslam/media/qualitative_candidates/candidate_10_fr1_desk_frame_000367_rgb.png",
+    "source": "/home/2DGS_SLAM/2dgslam/datasets/tum/rgbd_dataset_freiburg1_desk/rgb/1305031465.559812.png"
+  }
+]

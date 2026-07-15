@@ -66,6 +66,9 @@ python slam.py --config configs/mono/replica/office0.yaml --eval
 
 ### Quantitative Results (Monocular Comparison)
 
+> [!NOTE]
+> For the complete set of evaluation results, including the final thesis configurations, regularization loss ablations (depth distortion and normal consistency), DSSIM loss ablations, and feature tuning, see the consolidated [EVALUATION_RESULTS.md](EVALUATION_RESULTS.md).
+
 We compare **2DGSLAM** (this repo) against the **Gaussian Splatting SLAM (MonoGS)** baseline across all sequences. All results use monocular camera input.
 
 #### 1. TUM RGB-D Dataset
